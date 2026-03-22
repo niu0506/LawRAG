@@ -387,7 +387,12 @@ class RAGEngine:
         logger.info("🚀 初始化 RAG 引擎...")
         
         import torch
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
         logger.info(f"📍 使用设备: {device}")
         
         self.embeddings = HuggingFaceEmbeddings(
@@ -426,7 +431,12 @@ class RAGEngine:
         logger.info("🚀 异步初始化 RAG 引擎...")
         
         import torch
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
         logger.info(f"📍 使用设备: {device}")
         
         def load_embeddings():
