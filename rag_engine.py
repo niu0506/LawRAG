@@ -460,7 +460,7 @@ class RAGEngine:
         self.is_loading = False
         logger.info("✅ RAG 引擎就绪")
 
-    def _retriever(self):
+    def retriever(self):
         """
         创建向量检索器
         
@@ -472,7 +472,7 @@ class RAGEngine:
         return self.vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": settings.TOP_K})
 
     @staticmethod
-    def _context(docs: List[Document]) -> str:
+    def context(docs: List[Document]) -> str:
         """
         构建检索上下文
         
@@ -490,18 +490,18 @@ class RAGEngine:
         if self.vectorstore is None or self.llm is None:
             raise RuntimeError("RAG引擎未初始化")
         
-        docs = await asyncio.to_thread(self._retriever().invoke, question)
+        docs = await asyncio.to_thread(self.retriever().invoke, question)
         
         if not docs:
             return {"answer": "未找到相关法律条文，建议咨询专业律师或上传相关法律文档。", "sources": [], "question": question, "doc_count": 0}
         
-        prompt = PROMPT.format_messages(context=self._context(docs), question=question)
+        prompt = PROMPT.format_messages(context=self.context(docs), question=question)
         resp = await self.llm.ainvoke(prompt)
         
-        return {"answer": resp.content, "sources": self._sources(docs), "question": question, "doc_count": len(docs)}
+        return {"answer": resp.content, "sources": self.sources(docs), "question": question, "doc_count": len(docs)}
 
     @staticmethod
-    def _sources(docs: List[Document]) -> List[Dict[str, str]]:
+    def sources(docs: List[Document]) -> List[Dict[str, str]]:
         """
         提取文档来源信息
         

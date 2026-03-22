@@ -328,14 +328,14 @@ async def query_stream(req: QueryRequest):
             yield "data: [ERROR]RAG引擎未初始化\n\n"
             return
         
-        docs = await asyncio.to_thread(rag_engine._retriever().invoke, req.question)
+        docs = await asyncio.to_thread(rag_engine.retriever().invoke, req.question)
         if not docs:
             yield "data: 未找到相关法律条文。\n\n"
             yield "data: [DONE]\n\n"
             return
         
-        sources = rag_engine._sources(docs)
-        context = rag_engine._context(docs)
+        sources = rag_engine.sources(docs)
+        context = rag_engine.context(docs)
         full_answer = ""
         
         # 流式生成
