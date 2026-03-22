@@ -432,7 +432,7 @@ class RAGEngine:
         def load_embeddings():
             return HuggingFaceEmbeddings(
                 model_name=settings.EMBEDDING_MODEL,
-                model_kwargs={'device': device, 'local_files_only': True},
+                model_kwargs={'device': device, 'local_files_only': False},
                 encode_kwargs={'normalize_embeddings': True, 'batch_size': 32}
             )
         
