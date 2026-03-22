@@ -298,11 +298,14 @@ async function loadHistory() {
   } catch {}
 }
 
+let historyData = [];
+
 function renderHistory(items) {
   const el = document.getElementById('hist-list');
+  historyData = items || [];
   if (!items.length) { el.innerHTML = '<div class="hist-empty">暂无历史记录</div>'; return; }
-  el.innerHTML = items.map(h => `
-    <div class="hist-item" onclick="replayHistory('${esc(h.question)}')">
+  el.innerHTML = items.map((h, i) => `
+    <div class="hist-item" onclick="replayHistory(${i})">
       <div class="hist-q" title="${esc(h.question)}">${esc(h.question)}</div>
       <div class="hist-meta">
         <span>${h.sources?.length || 0} 条文</span>
@@ -311,10 +314,14 @@ function renderHistory(items) {
     </div>`).join('');
 }
 
-function replayHistory(q) {
-  document.getElementById('inp').value = q;
-  resize(document.getElementById('inp'));
-  document.getElementById('inp').focus();
+function replayHistory(index) {
+  const h = historyData[index];
+  if (!h) return;
+  const msgs = document.getElementById('msgs');
+  msgs.innerHTML = '';
+  document.getElementById('chips').style.display = 'none';
+  addMsg('user', h.question);
+  addMsg('ai', h.answer, h.sources || [], h.sources?.length || 0);
 }
 
 async function clearHistory() {
