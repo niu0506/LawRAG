@@ -42,7 +42,6 @@ class Settings(BaseSettings):
     # ==================== 存储路径配置 ====================
     CHROMA_DB_PATH: str = "./db/chroma"
     LAWS_DIR: str = "./data"
-    HISTORY_DB_PATH: str = "./db/history.db"
     FILE_HASH_CACHE: str = "./db/processed_files.json"
     
     # ==================== 服务器配置 ====================

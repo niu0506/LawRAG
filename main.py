@@ -5,14 +5,12 @@ AI 法律顾问 — FastAPI 后端服务
 主要功能包括：
 - 法律文档上传与管理
 - 基于向量检索的法律问答
-- 对话历史记录存储
 - 流式响应支持
 
 依赖技术：
 - FastAPI: Web框架
 - Chroma: 向量数据库
 - LangChain: LLM应用开发框架
-- SQLite: 历史记录存储
 """
 
 # 导入必要的标准库和第三方库
@@ -20,10 +18,9 @@ import asyncio
 import json
 import logging
 import os
-import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -88,138 +85,18 @@ class UploadResponse(BaseModel):
 # Pydantic模型：系统状态响应
 class StatusResponse(BaseModel):
     """系统状态响应模型"""
-    initialized: bool                       # RAG引擎是否已初始化
-    doc_count: int                          # 当前存储的文档片段数量
-    law_names: List[str]                    # 已加载的法律名称列表
-    llm_info: Dict[str, Any]                # LLM提供商信息
-    embedding_model: str                    # 使用的embedding模型名称
-    chunk_size: int                         # 文本分块大小
-    top_k: int                              # 检索时返回的top-k结果数
+    initialized: bool
+    doc_count: int
+    law_names: List[str]
+    llm_info: Dict[str, Any]
+    embedding_model: str
+    chunk_size: int
+    top_k: int
 
 
-# Pydantic模型：历史记录
-class HistoryRecord(BaseModel):
-    """历史问答记录模型"""
-    id: int                          # 记录ID
-    session_id: str                  # 会话ID
-    question: str                    # 用户问题
-    answer: str                      # AI回答
-    sources: List[SourceDocument]    # 引用的法律条文
-    timestamp: str                   # 记录时间戳
-
-
-# 允许上传的文件扩展名列表
-# 支持PDF、Word文档、PowerPoint、Excel、文本文件和Markdown
 ALLOWED_EXT = {'.pdf', '.docx', '.doc', '.pptx', '.xlsx', '.txt', '.md'}
 
 
-class HistoryDB:
-    """
-    历史记录数据库管理类
-    
-    使用SQLite存储用户的问答历史记录，支持以下功能：
-    - 保存问答记录
-    - 查询历史记录（按会话或全部）
-    - 删除特定会话的历史记录
-    - 清空所有历史记录
-    """
-    
-    def __init__(self):
-        """初始化数据库连接并创建必要的表结构"""
-        self._init_db()
-
-    def _init_db(self):
-        """创建历史记录表和索引"""
-        with self._conn() as conn:
-            # 创建history表，包含会话ID、问题、回答、来源和时间戳
-            conn.execute("""CREATE TABLE IF NOT EXISTS history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, question TEXT NOT NULL,
-                answer TEXT NOT NULL, sources TEXT DEFAULT '[]', timestamp TEXT NOT NULL)""")
-            # 创建会话ID索引，加速按会话查询
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_session ON history(session_id)")
-            # 创建时间戳索引，加速排序查询
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON history(timestamp)")
-
-    @contextmanager
-    def _conn(self):
-        """数据库连接上下文管理器"""
-        # 连接到SQLite数据库
-        conn = sqlite3.connect(settings.HISTORY_DB_PATH)
-        try:
-            yield conn
-            conn.commit()  # 提交事务
-        finally:
-            conn.close()   # 关闭连接
-
-    def save(self, session_id: str, question: str, answer: str, sources: List[SourceDocument]) -> int:
-        """
-        保存问答记录到数据库
-        
-        Args:
-            session_id: 会话ID
-            question: 用户问题
-            answer: AI回答
-            sources: 引用的法律条文列表
-        
-        Returns:
-            新记录的ID
-        """
-        with self._conn() as conn:
-            cur = conn.cursor()
-            # 插入新记录，来源以JSON格式存储
-            cur.execute("INSERT INTO history (session_id, question, answer, sources, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (session_id, question, answer, json.dumps([s.model_dump() for s in sources]), datetime.now().isoformat()))
-            return cur.lastrowid or 0
-
-    def get_history(self, session_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> tuple:
-        """
-        获取历史记录
-        
-        Args:
-            session_id: 可选的会话ID筛选条件
-            limit: 返回记录数量限制
-            offset: 偏移量，用于分页
-        
-        Returns:
-            (记录列表, 总记录数)的元组
-        """
-        with self._conn() as conn:
-            cur = conn.cursor()
-            if session_id:
-                # 按会话ID查询
-                cur.execute("SELECT COUNT(*) FROM history WHERE session_id = ?", (session_id,))
-                total = cur.fetchone()[0]
-                cur.execute("SELECT id, session_id, question, answer, sources, timestamp FROM history WHERE session_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?", (session_id, limit, offset))
-            else:
-                # 查询所有记录
-                cur.execute("SELECT COUNT(*) FROM history")
-                total = cur.fetchone()[0]
-                cur.execute("SELECT id, session_id, question, answer, sources, timestamp FROM history ORDER BY timestamp DESC LIMIT ? OFFSET ?", (limit, offset))
-            # 将查询结果转换为HistoryRecord对象列表
-            records = [HistoryRecord(id=r[0], session_id=r[1], question=r[2], answer=r[3],
-                        sources=[SourceDocument(**s) for s in json.loads(r[4])], timestamp=r[5]) for r in cur.fetchall()]
-            return records, total
-
-    def delete_session(self, session_id: str) -> int:
-        """删除指定会话的所有历史记录"""
-        with self._conn() as conn:
-            cur = conn.cursor()
-            cur.execute("DELETE FROM history WHERE session_id = ?", (session_id,))
-            return cur.rowcount
-
-    def clear_all(self) -> int:
-        """清空所有历史记录并返回删除的记录数"""
-        with self._conn() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM history")
-            count = cur.fetchone()[0]
-            cur.execute("DELETE FROM history")
-            return count
-
-
-# 创建全局单例实例
-history_db = HistoryDB()
-# 线程池执行器，用于后台处理文件上传等耗时任务
 executor = ThreadPoolExecutor(max_workers=2)
 
 
@@ -291,13 +168,8 @@ async def query(req: QueryRequest):
         raise HTTPException(503, "引擎未就绪")
     try:
         result = await rag_engine.query(req.question)
-        # 生成或使用传入的会话ID
-        session_id = req.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        # 将源文档转换为模型对象
         sources = [SourceDocument(**s) for s in result.get("sources", [])]
-        # 保存到历史记录
-        history_db.save(session_id=session_id, question=req.question, answer=result["answer"], sources=sources)
-        result["session_id"] = session_id
+        result["session_id"] = req.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         return QueryResponse(**result)
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -345,11 +217,7 @@ async def query_stream(req: QueryRequest):
                 full_answer += chunk.content
                 yield f"data: {chunk.content}\n\n"
         
-        # 保存历史记录
         session_id = req.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        source_docs = [SourceDocument(**s) for s in sources]
-        history_db.save(session_id=session_id, question=req.question, answer=full_answer, sources=source_docs)
-        
         metadata = json.dumps({"session_id": session_id, "sources": sources, "doc_count": len(docs)})
         yield f"data: [METADATA]{metadata}\n\n"
         yield "data: [DONE]\n\n"
@@ -479,44 +347,6 @@ async def health():
     """
     from rag_engine import rag_engine
     return {"status": "ok", "initialized": rag_engine.is_initialized}
-
-
-@app.get("/api/history")
-async def get_history(session_id: Optional[str] = None, limit: int = 100, page: int = 1):
-    """
-    获取问答历史记录API
-    
-    查询存储的问答历史，支持分页和会话筛选。
-    
-    查询参数:
-        session_id: 可选的会话ID筛选
-        limit: 每页记录数，默认100
-        page: 页码，默认1
-    """
-    offset = (page - 1) * limit
-    records, total = history_db.get_history(session_id=session_id, limit=limit, offset=offset)
-    return {"records": [r.model_dump() for r in records], "total": total, "page": page, "page_size": limit}
-
-
-@app.delete("/api/history/{session_id}")
-async def delete_session_history(session_id: str):
-    """
-    删除指定会话的历史记录
-    
-    路径参数:
-        session_id: 要删除的会话ID
-    """
-    return {"success": True, "deleted": history_db.delete_session(session_id), "session_id": session_id}
-
-
-@app.delete("/api/history")
-async def clear_history():
-    """
-    清空所有历史记录API
-    
-    删除所有问答历史记录。此操作不可恢复。
-    """
-    return {"success": True, "deleted": history_db.clear_all()}
 
 
 if __name__ == "__main__":
