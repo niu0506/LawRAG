@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["*"]
     MAX_UPLOAD_SIZE: int = 50 * 1024 * 1024
 
-    model_config = SettingsConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore", env_file=".env", env_file_encoding="utf-8")
 
 
 settings = Settings()
