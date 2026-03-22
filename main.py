@@ -16,10 +16,6 @@ AI 法律顾问 — FastAPI 后端服务
 """
 
 # 导入必要的标准库和第三方库
-import warnings
-# 忽略resource_tracker相关的警告（常见于多进程环境）
-warnings.filterwarnings("ignore", message="resource_tracker")
-
 import asyncio
 import json
 import logging
