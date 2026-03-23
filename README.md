@@ -77,7 +77,6 @@ DELETE /api/laws/{name}  # 删除法律
 ```
 GET  /api/status    # 系统状态
 GET  /api/health    # 健康检查
-POST /api/rebuild   # 重建向量数据库
 ```
 
 ### 历史记录

@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -291,26 +291,6 @@ async def delete_law(law_name: str):
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"删除失败: {str(e)}")
-
-
-@app.post("/api/rebuild")
-async def rebuild(bg: BackgroundTasks):
-    """
-    重建向量数据库API
-    
-    删除现有的Chroma向量数据库并在后台重新初始化。
-    这在向量数据库损坏或需要重置时使用。
-    
-    注意: 这是一个异步操作，通过BackgroundTasks在后台执行。
-    """
-    def _do():
-        if os.path.exists(settings.CHROMA_DB_PATH):
-            shutil.rmtree(settings.CHROMA_DB_PATH)
-        from rag_engine import rag_engine
-        rag_engine.is_initialized = False
-        rag_engine.initialize()
-    bg.add_task(_do)
-    return {"message": "后台重建中"}
 
 
 @app.get("/api/health")

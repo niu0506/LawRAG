@@ -7,10 +7,12 @@ python-multipart>=0.0.20  # 用于文件上传
 pydantic-settings>=2.8.0  # 最新，兼容 3.12+
 
 # LangChain 生态（核心 + 集成包）
-langchain-openai>=1.1.11     # 最新 2026-03 发布，兼容 Python >=3.10
-langchain-huggingface>=1.2.1 # 最新 2026-03，HuggingFace 集成
-langchain-chroma>=1.1.0      # 最新 2025-12，Chroma 向量存储集成
-langchain-community>=0.4.1   # 最新 2025-10，社区 loader 等（包含 PyPDFLoader 等）
+langchain-core>=0.3.0          # LangChain 核心
+langchain-text-splitters>=0.3.0  # 文本分割器
+langchain-openai>=0.3.0        # OpenAI 集成
+langchain-huggingface>=0.1.0   # HuggingFace 集成
+langchain-chroma>=0.2.0        # Chroma 向量存储集成
+langchain-community>=0.3.0     # 社区 loader 等（包含 PyPDFLoader 等）
 
 # PDF & DOCX 解析（你当前使用的 loader 依赖）
 pypdf>=6.9.1                 # 最新 2026-03，纯 Python PDF 处理，兼容 3.12
