@@ -606,6 +606,27 @@ class RAGEngine:
         return "\n\n".join(f"【{d.metadata.get('law_name','')} {d.metadata.get('article','')}】\n{d.page_content}" for d in docs)
 
     async def query(self, question: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        异步执行问答检索
+        
+        完整流程：
+        1. 接收用户问题
+        2. 调用异步检索获取相关法律条文
+        3. 构建上下文并调用带历史记录的LLM chain
+        4. 返回回答、来源文档和会话ID
+        
+        Args:
+            question: 用户提出的法律问题
+            session_id: 会话ID，用于关联对话历史
+        
+        Returns:
+            包含以下键的字典：
+            - answer: LLM生成的回答
+            - sources: 引用来源列表
+            - question: 原始问题
+            - doc_count: 检索到的文档数
+            - session_id: 会话ID
+        """
         if self.vectorstore is None or self.chain_with_history is None:
             raise RuntimeError("RAG引擎未初始化")
         
@@ -626,7 +647,20 @@ class RAGEngine:
         return {"answer": resp.content, "sources": self.sources(docs), "question": question, "doc_count": len(docs), "session_id": session_id}
 
     async def aretrieve(self, question: str) -> List[Document]:
-        """异步检索相关文档"""
+        """
+        异步向量检索
+        
+        将用户问题转换为向量，在向量数据库中检索相似度最高的法律条文。
+        
+        Args:
+            question: 用户问题
+        
+        Returns:
+            检索到的相关文档列表（Document对象列表）
+        
+        Raises:
+            RuntimeError: 向量存储未初始化时抛出
+        """
         if self.vectorstore is None:
             raise RuntimeError("向量存储未初始化")
         return await asyncio.to_thread(self.retriever().invoke, question)
@@ -741,6 +775,22 @@ class RAGEngine:
             self.law_names = []
 
     def get_status(self) -> Dict[str, Any]:
+        """
+        获取RAG引擎状态信息
+        
+        返回当前引擎的完整状态，用于前端显示和健康检查。
+        
+        Returns:
+            包含以下信息的字典：
+            - initialized: 是否已初始化
+            - loading: 是否正在加载
+            - doc_count: 文档片段总数
+            - law_names: 法律名称列表
+            - llm_info: LLM模型信息
+            - embedding_model: Embedding模型名称
+            - chunk_size: 文本块大小
+            - top_k: 检索返回结果数
+        """
         return {
             "initialized": self.is_initialized,
             "loading": self.is_loading,

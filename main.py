@@ -97,10 +97,15 @@ class StatusResponse(BaseModel):
     top_k: int
 
 
+# 允许上传的文件扩展名集合
+# 仅支持PDF和Word格式的法律文档
 ALLOWED_EXT = {'.pdf', '.docx'}
 
-
+# 线程池执行器，用于处理同步的文档处理任务
+# 最多同时处理2个文档，避免阻塞异步事件循环
 executor = ThreadPoolExecutor(max_workers=2)
+
+# 初始化完成事件，用于通知系统RAG引擎已就绪
 init_event = asyncio.Event()
 
 
