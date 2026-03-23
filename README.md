@@ -41,26 +41,30 @@ cd LawRAG
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
+```
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate   # Windows
 ```
 
 ### 3. 安装 PyTorch
 
 根据你的系统选择合适的安装命令：
 
-**Apple Silicon Mac (M1/M2/M3):**
+**Apple Silicon Mac (M系列芯片):**
 ```bash
-pip3 install torch torchvision torchaudio
+pip install torch torchvision torchaudio
 ```
 
 **Intel Mac / Windows CPU:**
 ```bash
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 ```
 
 **NVIDIA GPU (CUDA 12.4):**
 ```bash
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
 ### 4. 安装依赖

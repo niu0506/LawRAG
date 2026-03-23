@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     
     # ==================== 服务器配置 ====================
     # 服务器监听地址
-    HOST: str = "0.0.0.0"
+    HOST: str = "localhost"
     # 服务器监听端口
     PORT: int = 8000
     # CORS允许的来源列表，"*"表示允许所有

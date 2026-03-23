@@ -57,7 +57,6 @@
     flex-direction: column;
     border-right: 3px solid var(--gold);
     position: relative;
-    overflow: hidden;
   }
 
   .sidebar::before {
@@ -75,7 +74,7 @@
   }
 
   .sidebar-header {
-    padding: 28px 24px 20px;
+    padding: 20px 24px 16px;
     border-bottom: 1px solid rgba(212,173,79,0.3);
   }
 
@@ -129,7 +128,7 @@
 
   /* Status bar */
   .status-bar {
-    padding: 12px 24px;
+    padding: 8px 24px;
     background: rgba(0,0,0,0.2);
     border-bottom: 1px solid rgba(212,173,79,0.15);
   }
@@ -140,7 +139,7 @@
     gap: 8px;
     font-size: 12px;
     color: rgba(245,240,232,0.6);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }
   .status-item:last-child { margin-bottom: 0; }
 
@@ -160,7 +159,7 @@
 
   /* Sections */
   .sidebar-section {
-    padding: 16px 24px 12px;
+    padding: 12px 24px 10px;
     border-bottom: 1px solid rgba(212,173,79,0.15);
   }
 
@@ -177,7 +176,7 @@
   .upload-zone {
     border: 1.5px dashed rgba(212,173,79,0.4);
     border-radius: 6px;
-    padding: 14px;
+    padding: 10px;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s;
@@ -187,9 +186,9 @@
   .upload-zone.drag-over { border-color: var(--gold); background: rgba(212,173,79,0.1); }
   .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
-  .upload-icon { font-size: 22px; margin-bottom: 4px; }
-  .upload-text { font-size: 12px; color: rgba(245,240,232,0.6); }
-  .upload-hint { font-size: 10px; color: rgba(245,240,232,0.35); margin-top: 3px; }
+  .upload-icon { font-size: 18px; margin-bottom: 2px; }
+  .upload-text { font-size: 11px; color: rgba(245,240,232,0.6); }
+  .upload-hint { font-size: 10px; color: rgba(245,240,232,0.35); margin-top: 2px; }
 
   .upload-progress {
     display: none;
@@ -210,20 +209,21 @@
 
   /* Laws list */
   .laws-list {
-    flex: 1;
+    flex: 1 1 0;
     overflow-y: auto;
+    min-height: 500px;
     padding: 12px 24px;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(212,173,79,0.3) transparent;
+    scrollbar-width: auto;
+    scrollbar-color: rgba(212,173,79,0.4) transparent;
   }
 
   .law-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 6px 8px;
     border-radius: 4px;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
     transition: background 0.15s;
     cursor: default;
   }
@@ -242,12 +242,6 @@
     color: rgba(245,240,232,0.75);
     flex: 1;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .law-item:hover .law-name {
-    white-space: normal;
     word-break: break-all;
   }
 
@@ -274,6 +268,7 @@
   /* Sessions */
   .sidebar-sessions {
     padding: 0 24px 16px;
+    flex-shrink: 0;
   }
 
   .session-btn {
@@ -294,6 +289,105 @@
   .session-btn:hover { border-color: rgba(212,173,79,0.4); color: var(--paper); }
   .session-btn.new-chat { color: var(--gold-light); border-color: rgba(212,173,79,0.35); }
   .session-btn.new-chat:hover { background: rgba(212,173,79,0.1); border-color: var(--gold); }
+
+  .history-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(212,173,79,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .history-title {
+    font-size: 14px;
+    color: var(--paper);
+    font-weight: 500;
+  }
+  .history-clear {
+    font-size: 11px;
+    color: var(--seal);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+  .history-clear:hover { opacity: 1; }
+
+  .history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .history-item {
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 4px;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .history-item:hover { background: rgba(212,173,79,0.1); }
+  .history-item.active { background: rgba(212,173,79,0.15); border-left: 2px solid var(--gold); }
+
+  .history-item-title {
+    font-size: 13px;
+    color: var(--paper);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .history-item-preview {
+    font-size: 11px;
+    color: rgba(245,240,232,0.5);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+  }
+  .history-item-meta {
+    display: flex;
+    align-items: center;
+  }
+  .history-item-count {
+    font-size: 10px;
+    color: rgba(212,173,79,0.6);
+  }
+  .history-item-actions {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    gap: 4px;
+  }
+  .history-item:hover .history-item-actions { display: flex; }
+  .history-action {
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    opacity: 0.6;
+  }
+  .history-action:hover { opacity: 1; }
+  .history-action.rename { color: var(--gold-light); }
+  .history-action.delete { color: var(--seal); }
+
+  .history-back {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    font-size: 13px;
+    color: var(--gold-light);
+    cursor: pointer;
+    border-bottom: 1px solid rgba(212,173,79,0.15);
+  }
+  .history-back:hover { background: rgba(212,173,79,0.05); }
+
+  .history-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: rgba(245,240,232,0.4);
+    font-size: 13px;
+  }
 
   /* ══════════════ MAIN AREA ══════════════ */
   .main {
@@ -737,10 +831,10 @@
   .toast.info { background: var(--ink-light); color: var(--paper); }
 
   /* Scrollbar */
-  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(26,18,8,0.15); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(26,18,8,0.25); }
+  ::-webkit-scrollbar-thumb { background: rgba(26,18,8,0.2); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(26,18,8,0.35); }
 
   /* Responsive */
   @media (max-width: 768px) {
@@ -757,52 +851,76 @@
 <div class="app">
   <!-- ── SIDEBAR ── -->
   <aside class="sidebar">
-    <div class="sidebar-header">
-      <div class="logo">
-        <div class="logo-seal">律</div>
-        <div class="logo-text">法律顾问</div>
+    <!-- 主视图 -->
+    <div id="sidebarMain">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-seal">律</div>
+          <div class="logo-text">法律顾问</div>
+        </div>
+        <div class="logo-sub">LawRAG · AI Legal Advisor</div>
       </div>
-      <div class="logo-sub">LawRAG · AI Legal Advisor</div>
-    </div>
 
-    <div class="status-bar">
-      <div class="status-item">
-        <span class="status-dot" id="engineDot"></span>
-        <span id="engineStatus">正在初始化...</span>
-      </div>
-      <div class="status-item">
-        <span class="status-dot ready"></span>
-        <span id="docCount">0 个文档片段</span>
-      </div>
-    </div>
-
-    <div class="sidebar-section">
-      <div class="section-label">上传法律文档</div>
-      <div class="upload-zone" id="uploadZone">
-        <input type="file" id="fileInput" accept=".pdf,.docx" multiple>
-        <div class="upload-icon">📄</div>
-        <div class="upload-text">点击或拖放文件</div>
-        <div class="upload-hint">支持 PDF / Word 格式</div>
-        <div class="upload-progress" id="uploadProgress">
-          <div class="upload-progress-bar" id="uploadProgressBar"></div>
+      <div class="status-bar">
+        <div class="status-item">
+          <span class="status-dot" id="engineDot"></span>
+          <span id="engineStatus">正在初始化...</span>
+        </div>
+        <div class="status-item">
+          <span class="status-dot ready"></span>
+          <span id="docCount">0 个文档片段</span>
         </div>
       </div>
-    </div>
 
-    <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column;overflow:hidden;padding-bottom:8px;">
-      <div class="section-label" id="lawsSectionLabel">已加载法律</div>
-      <div class="laws-list" id="lawsList">
-        <div class="laws-empty" id="lawsEmpty">暂未加载法律文档</div>
+      <div class="sidebar-section">
+        <div class="section-label">上传法律文档</div>
+        <div class="upload-zone" id="uploadZone">
+          <input type="file" id="fileInput" accept=".pdf,.docx" multiple>
+          <div class="upload-icon">📄</div>
+          <div class="upload-text">点击或拖放文件</div>
+          <div class="upload-hint">支持 PDF / Word 格式</div>
+          <div class="upload-progress" id="uploadProgress">
+            <div class="upload-progress-bar" id="uploadProgressBar"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column;padding-bottom:8px;min-height:0;overflow:hidden;">
+        <div class="section-label" id="lawsSectionLabel">已加载法律</div>
+        <div class="laws-list" id="lawsList">
+          <div class="laws-empty" id="lawsEmpty">暂未加载法律文档</div>
+        </div>
+      </div>
+
+      <div class="sidebar-sessions">
+        <button class="session-btn new-chat" onclick="newSession()">
+          <span>✦</span> 开始新对话
+        </button>
+        <button class="session-btn" onclick="showHistory()">
+          <span>◷</span> 历史记录
+        </button>
       </div>
     </div>
 
-    <div class="sidebar-sessions">
-      <button class="session-btn new-chat" onclick="newSession()">
-        <span>✦</span> 开始新对话
-      </button>
-      <button class="session-btn" onclick="showHistory()">
-        <span>◷</span> 历史记录
-      </button>
+    <!-- 历史视图 -->
+    <div id="sidebarHistory" style="display:none;flex-direction:column;height:100%;">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-seal">律</div>
+          <div class="logo-text">法律顾问</div>
+        </div>
+        <div class="logo-sub">LawRAG · AI Legal Advisor</div>
+      </div>
+      <div class="history-back" onclick="hideHistory()">
+        <span>←</span> 返回
+      </div>
+      <div class="history-header">
+        <span class="history-title">历史记录</span>
+        <span class="history-clear" onclick="clearAllHistory()">清空全部</span>
+      </div>
+      <div class="history-list" id="historyList">
+        <div class="history-empty">暂无历史记录</div>
+      </div>
     </div>
   </aside>
 
@@ -1113,14 +1231,146 @@ function newSession() {
 }
 
 async function showHistory() {
+  document.getElementById('sidebarMain').style.display = 'none';
+  document.getElementById('sidebarHistory').style.display = 'flex';
+  await loadHistoryList();
+}
+
+function hideHistory() {
+  document.getElementById('sidebarHistory').style.display = 'none';
+  document.getElementById('sidebarMain').style.display = 'block';
+}
+
+async function loadHistoryList() {
+  const list = document.getElementById('historyList');
+  list.innerHTML = '<div class="history-empty">加载中...</div>';
+  
   try {
     const res = await fetch('/api/history');
     const data = await res.json();
-    if (!data.sessions?.length) { toast('暂无历史记录', 'info'); return; }
-    // Simple list in toast
-    toast(`共 ${data.sessions.length} 条历史记录`, 'info');
+    
+    if (!data.sessions?.length) {
+      list.innerHTML = '<div class="history-empty">暂无历史记录</div>';
+      return;
+    }
+    
+    list.innerHTML = '';
+    data.sessions.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'history-item' + (s.id === sessionId ? ' active' : '');
+      const title = s.title || `会话 ${s.id.slice(-6)}`;
+      
+      item.innerHTML = `
+        <div class="history-item-title">${esc(title)}</div>
+        <div class="history-item-preview">${esc(s.last_message || '')}</div>
+        <div class="history-item-meta">
+          <span class="history-item-count">${s.message_count || 0} 条消息</span>
+        </div>
+        <div class="history-item-actions">
+          <span class="history-action rename" onclick="renameSession('${s.id}', '${esc(title)}', event)">✎</span>
+          <span class="history-action delete" onclick="deleteHistorySession('${s.id}', event)">✕</span>
+        </div>
+      `;
+      item.onclick = () => loadSession(s.id);
+      list.appendChild(item);
+    });
   } catch(e) {
+    list.innerHTML = '<div class="history-empty">加载失败</div>';
     toast('获取历史失败', 'error');
+  }
+}
+
+async function loadSession(id) {
+  try {
+    const res = await fetch(`/api/history/${id}`);
+    if (!res.ok) {
+      toast('加载会话失败', 'error');
+      return;
+    }
+    const data = await res.json();
+    
+    sessionId = id;
+    document.getElementById('sessionLabel').textContent = `会话 ${id.slice(-6)}`;
+    
+    const messagesEl = document.getElementById('messages');
+    messagesEl.innerHTML = '';
+    
+    document.getElementById('welcomeScreen').style.display = 'none';
+    messagesEl.style.display = 'block';
+    
+    for (const msg of data.messages) {
+      const role = msg.type === 'human' ? 'user' : 'ai';
+      const content = msg.data?.content || '';
+      if (role === 'user') {
+        addMessage('user', content);
+      } else {
+        addMessage('ai', content);
+      }
+    }
+    
+    hideHistory();
+    toast('已恢复对话', 'success');
+  } catch(e) {
+    toast('加载会话失败', 'error');
+  }
+}
+
+async function deleteHistorySession(id, event) {
+  event.stopPropagation();
+  if (!confirm('确认删除此会话？')) return;
+  
+  try {
+    const res = await fetch(`/api/history/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast('已删除', 'info');
+      await loadHistoryList();
+      if (sessionId === id) {
+        newSession();
+      }
+    } else {
+      toast('删除失败', 'error');
+    }
+  } catch(e) {
+    toast('删除失败', 'error');
+  }
+}
+
+async function renameSession(id, currentTitle, event) {
+  event.stopPropagation();
+  const newTitle = prompt('请输入新名称:', currentTitle);
+  if (!newTitle || newTitle === currentTitle) return;
+  
+  try {
+    const res = await fetch(`/api/history/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: newTitle })
+    });
+    if (res.ok) {
+      toast('已重命名', 'success');
+      await loadHistoryList();
+    } else {
+      toast('重命名失败', 'error');
+    }
+  } catch(e) {
+    toast('重命名失败', 'error');
+  }
+}
+
+async function clearAllHistory() {
+  if (!confirm('确认清空所有历史记录？此操作不可恢复。')) return;
+  
+  try {
+    const res = await fetch('/api/history', { method: 'DELETE' });
+    if (res.ok) {
+      toast('已清空所有历史', 'info');
+      await loadHistoryList();
+      newSession();
+    } else {
+      toast('清空失败', 'error');
+    }
+  } catch(e) {
+    toast('清空失败', 'error');
   }
 }
 

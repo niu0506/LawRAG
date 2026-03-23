@@ -360,6 +360,19 @@ async def clear_history():
     return {"success": True, "deleted_count": count}
 
 
+class RenameRequest(BaseModel):
+    """重命名请求模型"""
+    title: str = Field(..., min_length=1, max_length=50)
+
+
+@app.patch("/api/history/{session_id}")
+async def rename_session(session_id: str, req: RenameRequest):
+    """重命名会话"""
+    if not history_manager.rename_session(session_id, req.title):
+        raise HTTPException(404, "会话不存在")
+    return {"success": True, "session_id": session_id, "title": req.title}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=True)

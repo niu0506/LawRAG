@@ -69,6 +69,7 @@ def _init_db_schema(conn: sqlite3.Connection) -> None:
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
+            title TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -145,22 +146,48 @@ class HistoryManager:
             with _get_db_conn(self.db_path) as conn:
                 _init_db_schema(conn)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)")
+                try:
+                    conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
+                except sqlite3.OperationalError:
+                    pass
     
     def list_sessions(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         with _db_lock:
             with _get_db_conn(self.db_path) as conn:
                 rows = conn.execute(
-                    """SELECT s.id, s.created_at, s.updated_at, COUNT(m.id) as message_count
+                    """SELECT s.id, s.title, s.created_at, s.updated_at, COUNT(m.id) as message_count,
+                              (SELECT message FROM messages WHERE session_id = s.id ORDER BY id DESC LIMIT 1) as last_message
                        FROM sessions s LEFT JOIN messages m ON s.id = m.session_id
                        GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ? OFFSET ?""",
                     (limit, offset)
                 ).fetchall()
-                return [dict(row) for row in rows]
+                results = []
+                for row in rows:
+                    r = dict(row)
+                    last_msg = r.get("last_message")
+                    if last_msg:
+                        try:
+                            msg_data = json.loads(last_msg)
+                            content = msg_data.get("content", "")
+                            r["last_message"] = content[:50] + ("..." if len(content) > 50 else "")
+                        except:
+                            r["last_message"] = ""
+                    results.append(r)
+                return results
     
     def delete_session(self, session_id: str) -> bool:
         with _db_lock:
             with _get_db_conn(self.db_path) as conn:
                 cursor = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+                return cursor.rowcount > 0
+    
+    def rename_session(self, session_id: str, title: str) -> bool:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                cursor = conn.execute(
+                    "UPDATE sessions SET title = ? WHERE id = ?",
+                    (title, session_id)
+                )
                 return cursor.rowcount > 0
     
     def clear_all(self) -> int:
