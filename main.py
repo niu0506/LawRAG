@@ -94,7 +94,7 @@ class StatusResponse(BaseModel):
     top_k: int
 
 
-ALLOWED_EXT = {'.pdf', '.docx', '.doc', '.pptx', '.xlsx', '.txt', '.md'}
+ALLOWED_EXT = {'.pdf', '.docx'}
 
 
 executor = ThreadPoolExecutor(max_workers=2)

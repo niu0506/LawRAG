@@ -34,11 +34,11 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any
 
 from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from markitdown import MarkItDown
 
 from config import settings, get_llm, get_llm_info
 
@@ -73,7 +73,7 @@ PROMPT = ChatPromptTemplate.from_template("""你是一名专业、严谨的AI法
 """)
 
 # 支持的文档扩展名
-SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.pptx', '.xlsx', '.txt', '.md'}
+SUPPORTED_EXTENSIONS = {'.pdf', '.docx'}
 
 
 # ==================== 辅助函数 ====================
@@ -210,69 +210,40 @@ class LawDocumentLoader:
         path = Path(file_path)
         ext = path.suffix.lower()
         
-        # 根据扩展名选择解析方式
-        # 二进制格式（PDF、Word等）使用MarkItDown转换
-        # 文本格式直接读取
-        text = self._markitdown_convert(file_path) if ext in {'.pdf', '.docx', '.doc', '.pptx', '.xlsx'} else path.read_text(encoding='utf-8', errors='ignore')
-        
+        text = self._load_document(file_path, ext)
         if not text.strip():
             return []
         
-        # 自动识别法律名称
         law_name = self._get_law_name(path.stem, text)
-        # 文本分块
         chunks = self._split_logic(text)
         
-        # 转换为LangChain Document对象
         return [Document(page_content=c, metadata={"source": path.name, "law_name": law_name, "article": self._get_article_tag(c) or f"片段{i+1}"}) for i, c in enumerate(chunks) if c.strip()]
 
-    def _markitdown_convert(self, file_path: str) -> str:
+    def _load_document(self, file_path: str, ext: str) -> str:
         """
-        使用MarkItDown将文档转换为纯文本
-        
-        MarkItDown是一个通用的文档转换库，支持多种格式。
-        如果MarkItDown不可用，会回退到备选方案。
+        根据文件类型加载文档内容
         
         Args:
             file_path: 文档路径
+            ext: 文件扩展名（小写）
         
         Returns:
             提取的纯文本内容
         """
         try:
-            return MarkItDown().convert(file_path).text_content
-        except ImportError:
-            logger.warning("未安装 markitdown，使用备选方案")
-        except Exception as e:
-            if "MissingDependencyException" not in str(e):
-                logger.error(f"MarkItDown 失败: {e}")
-        # 回退方案
-        return self._fallback(file_path)
-
-    @staticmethod
-    def _fallback(file_path: str) -> str:
-        """
-        备选文档解析方案
-        
-        当MarkItDown不可用时，使用专用库解析。
-        
-        Args:
-            file_path: 文档路径
-        
-        Returns:
-            提取的文本内容
-        """
-        ext = Path(file_path).suffix.lower()
-        try:
             if ext == '.pdf':
-                from pypdf import PdfReader
-                return "\n".join(p.extract_text() or "" for p in PdfReader(file_path).pages)
-            if ext in {'.docx', '.doc'}:
-                from docx import Document as DocxDoc
-                return "\n".join(p.text for p in DocxDoc(file_path).paragraphs)
+                loader = PyPDFLoader(file_path)
+                docs = loader.load()
+                return '\n'.join(doc.page_content for doc in docs)
+            elif ext == '.docx':
+                loader = Docx2txtLoader(file_path)
+                docs = loader.load()
+                return '\n'.join(doc.page_content for doc in docs)
+            else:
+                return Path(file_path).read_text(encoding='utf-8', errors='ignore')
         except Exception as e:
-            logger.warning(f"备选解析失败: {e}")
-        return Path(file_path).read_text(encoding='utf-8', errors='ignore')
+            logger.error(f"文档解析失败: {e}")
+            return ""
 
     def _split_logic(self, text: str) -> List[str]:
         """
