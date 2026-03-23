@@ -36,6 +36,27 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .model-tag{padding:4px 10px;background:var(--gold-dim);border:1px solid rgba(201,168,76,.25);border-radius:3px;font-size:10px;color:var(--gold);letter-spacing:.5px;display:none}
 .new-chat-btn{padding:6px 14px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:12px;color:var(--text2);cursor:pointer;transition:all .2s;font-family:'Noto Sans SC',sans-serif}
 .new-chat-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+.history-btn{padding:6px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:12px;color:var(--text2);cursor:pointer;transition:all .2s}
+.history-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gold-dim)}
+.history-panel{position:fixed;top:56px;right:16px;width:320px;max-height:400px;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:100;display:none;overflow:hidden}
+.history-panel.show{display:block}
+.history-head{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.history-head-title{font-size:12px;color:var(--text2);letter-spacing:1px}
+.history-clear{font-size:10px;color:var(--red);cursor:pointer;padding:4px 8px;border:1px solid rgba(192,57,43,.25);border-radius:3px;background:var(--red-dim)}
+.history-clear:hover{background:var(--red);color:var(--bg)}
+.history-list{max-height:340px;overflow-y:auto}
+.history-list::-webkit-scrollbar{width:3px}
+.history-list::-webkit-scrollbar-thumb{background:var(--border2)}
+.history-item{padding:10px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .2s}
+.history-item:hover{background:var(--surface2)}
+.history-item:last-child{border-bottom:none}
+.history-item-id{font-size:11px;color:var(--text3);margin-bottom:4px}
+.history-item-time{font-size:10px;color:var(--text3)}
+.history-item-count{font-size:10px;color:var(--gold);margin-left:8px}
+.history-item-delete{float:right;font-size:10px;color:var(--red);opacity:0;transition:opacity .2s;padding:2px 6px;border:1px solid rgba(192,57,43,.25);border-radius:3px}
+.history-item:hover .history-item-delete{opacity:1}
+.history-item-delete:hover{background:var(--red);color:var(--bg)}
+.history-empty{text-align:center;padding:30px;color:var(--text3);font-size:12px}
 
 /* LAYOUT */
 .layout{display:flex;flex:1;overflow:hidden}
@@ -152,6 +173,7 @@ textarea::placeholder{color:var(--text3)}
     </div>
   </div>
   <div class="header-right">
+    <button class="history-btn" onclick="toggleHistory()" title="历史记录">📜 历史</button>
     <button class="new-chat-btn" onclick="newChat()" title="新建聊天">+ 新对话</button>
     <div class="model-tag" id="model-tag">—</div>
     <div class="status-pill">
@@ -160,6 +182,16 @@ textarea::placeholder{color:var(--text3)}
     </div>
   </div>
 </header>
+
+<div class="history-panel" id="history-panel">
+  <div class="history-head">
+    <span class="history-head-title">对话历史</span>
+    <span class="history-clear" onclick="clearAllHistory()">清空全部</span>
+  </div>
+  <div class="history-list" id="history-list">
+    <div class="history-empty">加载中...</div>
+  </div>
+</div>
 
 <div class="layout">
 
@@ -231,6 +263,7 @@ textarea::placeholder{color:var(--text3)}
 <script>
 const API = '';
 let busy = false;
+let sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
 // ── INIT ────────────────────────────────────────────────────
 async function init() {
@@ -255,6 +288,7 @@ async function init() {
 }
 
 function newChat() {
+  sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   const msgs = document.getElementById('msgs');
   msgs.innerHTML = `<div class="welcome">
     <div class="welcome-glyph">律</div>
@@ -291,7 +325,7 @@ async function doQuery(q) {
   try {
     const r = await fetch(`${API}/api/query`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({question:q})
+      body: JSON.stringify({question:q, session_id:sessionId})
     });
     removeEl(tid);
     const d = await r.json();
@@ -306,7 +340,7 @@ async function doStream(q) {
   try {
     const r = await fetch(`${API}/api/query/stream`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({question:q})
+      body: JSON.stringify({question:q, session_id:sessionId})
     });
     if (!r.ok) { bubble.textContent = '❌ 请求失败'; return; }
     const reader = r.body.getReader();
@@ -494,6 +528,82 @@ async function deleteLaw(lawName) {
     } else toast(`✕ ${d.detail || d.message || '删除失败'}`, true);
   } catch (e) { toast(`✕ 网络错误: ${e.message}`, true); }
 }
+
+// ── HISTORY ──────────────────────────────────────────────────
+function toggleHistory() {
+  const panel = document.getElementById('history-panel');
+  if (panel.classList.contains('show')) {
+    panel.classList.remove('show');
+  } else {
+    panel.classList.add('show');
+    loadHistory();
+  }
+}
+
+document.addEventListener('click', e => {
+  const panel = document.getElementById('history-panel');
+  const btn = document.querySelector('.history-btn');
+  if (!panel.contains(e.target) && !btn.contains(e.target)) {
+    panel.classList.remove('show');
+  }
+});
+
+async function loadHistory() {
+  const el = document.getElementById('history-list');
+  try {
+    const r = await fetch(`${API}/api/history?limit=20`);
+    const d = await r.json();
+    if (!r.ok) { el.innerHTML = '<div class="history-empty">加载失败</div>'; return; }
+    if (!d.sessions.length) {
+      el.innerHTML = '<div class="history-empty">暂无对话记录</div>';
+      return;
+    }
+    el.innerHTML = d.sessions.map(s => `
+      <div class="history-item" onclick="loadSession('${s.id}')">
+        <div class="history-item-id">${s.id.slice(0, 20)}...</div>
+        <span class="history-item-time">${s.updated_at ? new Date(s.updated_at).toLocaleString('zh-CN') : ''}</span>
+        <span class="history-item-count">${s.message_count || 0} 条消息</span>
+        <span class="history-item-delete" onclick="event.stopPropagation();deleteSession('${s.id}')">删除</span>
+      </div>
+    `).join('');
+  } catch (e) { el.innerHTML = '<div class="history-empty">加载失败</div>'; }
+}
+
+async function loadSession(sid) {
+  sessionId = sid;
+  try {
+    const r = await fetch(`${API}/api/history/${sid}`);
+    if (!r.ok) { toast('加载会话失败', true); return; }
+    const d = await r.json();
+    const msgs = document.getElementById('msgs');
+    msgs.innerHTML = '';
+    document.getElementById('chips').style.display = 'none';
+    for (const m of d.messages) {
+      const role = m.type === 'human' ? 'user' : 'ai';
+      addMsg(role, m.data.content);
+    }
+    document.getElementById('history-panel').classList.remove('show');
+    toast('已加载历史对话');
+  } catch (e) { toast(`加载失败: ${e.message}`, true); }
+}
+
+async function deleteSession(sid) {
+  if (!confirm('确定删除此对话？')) return;
+  try {
+    const r = await fetch(`${API}/api/history/${sid}`, {method:'DELETE'});
+    if (r.ok) { toast('已删除'); loadHistory(); }
+    else toast('删除失败', true);
+  } catch (e) { toast(`删除失败: ${e.message}`, true); }
+}
+
+async function clearAllHistory() {
+  if (!confirm('确定清空所有对话历史？此操作不可恢复。')) return;
+  try {
+    const r = await fetch(`${API}/api/history`, {method:'DELETE'});
+    const d = await r.json();
+    if (r.ok) { toast(`已清空 ${d.deleted_count} 条记录`); loadHistory(); }
+    else toast('清空失败', true);
+  } catch (e) { toast(`清空失败: ${e.message}`, true); }
 
 // ── UTILS ───────────────────────────────────────────────────
 async function fetchJSON(url) {

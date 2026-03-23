@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 50
     TOP_K: int = 5
+    HISTORY_TURNS: int = 5
     
     # ==================== 存储路径配置 ====================
     CHROMA_DB_PATH: str = "./db/chroma"
@@ -86,8 +87,16 @@ def get_llm_info() -> Dict[str, Any]:
     获取当前LLM配置信息
     
     Returns:
-        包含model的字典
+        包含name和model的字典
     """
+    model_name = settings.LLM_MODEL
+    if "/" in model_name:
+        name = model_name.split("/")[-1]
+    elif ":" in model_name:
+        name = model_name.split(":")[0]
+    else:
+        name = model_name
     return {
-        "model": settings.LLM_MODEL,
+        "name": name,
+        "model": model_name,
     }

@@ -30,13 +30,19 @@ import json
 import logging
 import os
 import re
+import sqlite3
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 
 from langchain_chroma import Chroma
+from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, messages_from_dict, messages_to_dict
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -44,14 +50,140 @@ from config import settings, get_llm, get_llm_info
 
 logger = logging.getLogger(__name__)
 
+
+# ==================== 数据库辅助函数 ====================
+
+_db_lock = threading.Lock()
+
+def _get_db_conn(db_path: str) -> sqlite3.Connection:
+    """获取数据库连接的共享函数"""
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+def _init_db_schema(conn: sqlite3.Connection) -> None:
+    """初始化数据库表结构"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+    """)
+
+
+# ==================== 对话历史管理 ====================
+
+class SQLiteChatMessageHistory(BaseChatMessageHistory):
+    """基于 SQLite 的对话历史存储"""
+    
+    def __init__(self, session_id: str, db_path: str = "./db/history.db"):
+        self.session_id = session_id
+        self.db_path = db_path
+        self.max_history = settings.HISTORY_TURNS
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+    
+    def _init_db(self) -> None:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                _init_db_schema(conn)
+    
+    @property
+    def messages(self) -> List[BaseMessage]:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                conn.execute("INSERT OR IGNORE INTO sessions (id) VALUES (?)", (self.session_id,))
+                rows = conn.execute(
+                    "SELECT message FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                    (self.session_id, self.max_history * 2)
+                ).fetchall()
+                msgs = messages_from_dict([json.loads(row["message"]) for row in reversed(rows)])
+                return msgs
+    
+    def add_message(self, message: BaseMessage) -> None:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                conn.execute("INSERT OR IGNORE INTO sessions (id) VALUES (?)", (self.session_id,))
+                conn.execute(
+                    "INSERT INTO messages (session_id, message) VALUES (?, ?)",
+                    (self.session_id, json.dumps(messages_to_dict([message])[0], ensure_ascii=False))
+                )
+                conn.execute(
+                    "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (self.session_id,)
+                )
+    
+    def clear(self) -> None:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                conn.execute("DELETE FROM messages WHERE session_id = ?", (self.session_id,))
+                conn.execute("DELETE FROM sessions WHERE id = ?", (self.session_id,))
+
+
+class HistoryManager:
+    """历史记录管理器"""
+    
+    def __init__(self, db_path: str = "./db/history.db"):
+        self.db_path = db_path
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+    
+    def _init_db(self) -> None:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                _init_db_schema(conn)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)")
+    
+    def list_sessions(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                rows = conn.execute(
+                    """SELECT s.id, s.created_at, s.updated_at, COUNT(m.id) as message_count
+                       FROM sessions s LEFT JOIN messages m ON s.id = m.session_id
+                       GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ? OFFSET ?""",
+                    (limit, offset)
+                ).fetchall()
+                return [dict(row) for row in rows]
+    
+    def delete_session(self, session_id: str) -> bool:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                cursor = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+                return cursor.rowcount > 0
+    
+    def clear_all(self) -> int:
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                cursor = conn.execute("DELETE FROM sessions")
+                return cursor.rowcount
+
+
+def get_session_history(session_id: str) -> SQLiteChatMessageHistory:
+    """获取会话历史的工厂函数"""
+    return SQLiteChatMessageHistory(session_id)
+
+
+history_manager = HistoryManager()
+
 # ==================== 系统提示词 ====================
 # 定义LLM的角色和行为要求
-PROMPT = ChatPromptTemplate.from_template("""你是一名专业、严谨的AI法律顾问。请仅依据提供的【参考条文】回答用户问题，不得编造不存在的法律条文。
+PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """你是一名专业、严谨的AI法律顾问。请仅依据提供的【参考条文】回答用户问题，不得编造不存在的法律条文。
 如果参考条文不足以回答问题，请明确说明"参考条文不足"。
 【参考条文】
 {context}
-【用户问题】
-{question}
 请按照以下结构进行回答：
 【法律分析】
 - 结合参考条文逐步分析问题
@@ -69,8 +201,10 @@ PROMPT = ChatPromptTemplate.from_template("""你是一名专业、严谨的AI法
 2. 不得虚构法律条文
 3. 若条文信息不足，请明确说明
 4. 结构化输出
-5. 使用简体中文
-""")
+5. 使用简体中文"""),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}")
+])
 
 # 支持的文档扩展名
 SUPPORTED_EXTENSIONS = {'.pdf', '.docx'}
@@ -346,31 +480,60 @@ class RAGEngine:
         self.vectorstore: Optional[Chroma] = None
         self.llm = None
         self.embeddings: Optional[HuggingFaceEmbeddings] = None
+        self.chain_with_history = None
         self.is_initialized = False
         self.is_loading = False
         self.doc_count = 0
         self.law_names: List[str] = []
 
-    def initialize(self) -> None:
-        """
-        同步初始化RAG引擎
-        """
-        logger.info("🚀 初始化 RAG 引擎...")
-        
+    @staticmethod
+    def _get_device() -> str:
+        """获取计算设备"""
         import torch
         if torch.cuda.is_available():
-            device = "cuda"
+            return "cuda"
         elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-        logger.info(f"📍 使用设备: {device}")
-        
-        self.embeddings = HuggingFaceEmbeddings(
+            return "mps"
+        return "cpu"
+
+    @staticmethod
+    def _create_embeddings(device: str) -> HuggingFaceEmbeddings:
+        """创建Embedding模型"""
+        return HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL,
-            model_kwargs={'device': device, 'local_files_only': True},
+            model_kwargs={'device': device, 'local_files_only': False},
             encode_kwargs={'normalize_embeddings': True, 'batch_size': 32}
         )
+
+    def _setup_vectorstore(self) -> None:
+        """设置向量数据库"""
+        db = settings.CHROMA_DB_PATH
+        if os.path.exists(db) and os.listdir(db):
+            self.vectorstore = Chroma(
+                persist_directory=db,
+                embedding_function=self.embeddings,
+                collection_name="laws"
+            )
+            self.doc_count = len(self.vectorstore.get()['ids'])
+            self._refresh_names()
+            logger.info(f"📂 加载向量库: {self.doc_count} 片段")
+        else:
+            self.vectorstore = Chroma(
+                persist_directory=db,
+                embedding_function=self.embeddings,
+                collection_name="laws"
+            )
+            self.doc_count = 0
+            logger.info("📭 向量库为空，请上传法律文档")
+
+    def initialize(self) -> None:
+        """同步初始化RAG引擎"""
+        logger.info("🚀 初始化 RAG 引擎...")
+        
+        device = self._get_device()
+        logger.info(f"📍 使用设备: {device}")
+        
+        self.embeddings = self._create_embeddings(device)
         
         try:
             self.llm = get_llm()
@@ -378,46 +541,30 @@ class RAGEngine:
             logger.error(f"❌ LLM 配置错误: {e}")
             raise
         
-        db = settings.CHROMA_DB_PATH
-        if os.path.exists(db) and os.listdir(db):
-            self.vectorstore = Chroma(persist_directory=db, embedding_function=self.embeddings, collection_name="laws")
-            self.doc_count = len(self.vectorstore.get()['ids'])
-            self._refresh_names()
-            logger.info(f"📂 加载向量库: {self.doc_count} 片段")
-        else:
-            self.vectorstore = Chroma(persist_directory=db, embedding_function=self.embeddings, collection_name="laws")
-            self.doc_count = 0
-            logger.info("📭 向量库为空，请上传法律文档")
-        
+        self._setup_vectorstore()
         self.is_initialized = True
+        self._build_chain()
         logger.info("✅ RAG 引擎就绪")
 
+    def _build_chain(self) -> None:
+        """构建带历史记录的 chain"""
+        chain = PROMPT | self.llm
+        self.chain_with_history = RunnableWithMessageHistory(
+            chain,
+            get_session_history,
+            input_messages_key="question",
+            history_messages_key="history"
+        )
+
     async def initialize_async(self) -> None:
-        """
-        异步初始化RAG引擎
-        
-        将Embedding模型加载放入线程池，避免阻塞事件循环。
-        """
+        """异步初始化RAG引擎，将Embedding模型加载放入线程池"""
         self.is_loading = True
         logger.info("🚀 异步初始化 RAG 引擎...")
         
-        import torch
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
+        device = self._get_device()
         logger.info(f"📍 使用设备: {device}")
         
-        def load_embeddings():
-            return HuggingFaceEmbeddings(
-                model_name=settings.EMBEDDING_MODEL,
-                model_kwargs={'device': device, 'local_files_only': False},
-                encode_kwargs={'normalize_embeddings': True, 'batch_size': 32}
-            )
-        
-        self.embeddings = await asyncio.to_thread(load_embeddings)
+        self.embeddings = await asyncio.to_thread(self._create_embeddings, device)
         
         try:
             self.llm = get_llm()
@@ -426,19 +573,10 @@ class RAGEngine:
             self.is_loading = False
             raise
         
-        db = settings.CHROMA_DB_PATH
-        if os.path.exists(db) and os.listdir(db):
-            self.vectorstore = Chroma(persist_directory=db, embedding_function=self.embeddings, collection_name="laws")
-            self.doc_count = len(self.vectorstore.get()['ids'])
-            self._refresh_names()
-            logger.info(f"📂 加载向量库: {self.doc_count} 片段")
-        else:
-            self.vectorstore = Chroma(persist_directory=db, embedding_function=self.embeddings, collection_name="laws")
-            self.doc_count = 0
-            logger.info("📭 向量库为空，请上传法律文档")
-        
+        await asyncio.to_thread(self._setup_vectorstore)
         self.is_initialized = True
         self.is_loading = False
+        self._build_chain()
         logger.info("✅ RAG 引擎就绪")
 
     def retriever(self):
@@ -467,19 +605,62 @@ class RAGEngine:
         """
         return "\n\n".join(f"【{d.metadata.get('law_name','')} {d.metadata.get('article','')}】\n{d.page_content}" for d in docs)
 
-    async def query(self, question: str) -> Dict[str, Any]:
-        if self.vectorstore is None or self.llm is None:
+    async def query(self, question: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+        if self.vectorstore is None or self.chain_with_history is None:
             raise RuntimeError("RAG引擎未初始化")
         
-        docs = await asyncio.to_thread(self.retriever().invoke, question)
+        docs = await self.aretrieve(question)
         
         if not docs:
             return {"answer": "未找到相关法律条文，建议咨询专业律师或上传相关法律文档。", "sources": [], "question": question, "doc_count": 0}
         
-        prompt = PROMPT.format_messages(context=self.context(docs), question=question)
-        resp = await self.llm.ainvoke(prompt)
+        if not session_id:
+            session_id = f"session_{os.urandom(4).hex()}"
         
-        return {"answer": resp.content, "sources": self.sources(docs), "question": question, "doc_count": len(docs)}
+        context = self.context(docs)
+        resp = await self.chain_with_history.ainvoke(
+            {"question": question, "context": context},
+            config={"configurable": {"session_id": session_id}}
+        )
+        
+        return {"answer": resp.content, "sources": self.sources(docs), "question": question, "doc_count": len(docs), "session_id": session_id}
+
+    async def aretrieve(self, question: str) -> List[Document]:
+        """异步检索相关文档"""
+        if self.vectorstore is None:
+            raise RuntimeError("向量存储未初始化")
+        return await asyncio.to_thread(self.retriever().invoke, question)
+
+    async def astream_query(self, question: str, session_id: Optional[str] = None):
+        """
+        流式问答生成器
+        
+        Yields:
+            str: 流式输出的文本块，或 {"error": "..."} 错误信息
+        """
+        if not self.is_initialized or self.chain_with_history is None:
+            yield {"error": "RAG引擎未初始化"}
+            return
+        
+        docs = await self.aretrieve(question)
+        if not docs:
+            yield {"error": "未找到相关法律条文"}
+            return
+        
+        if not session_id:
+            session_id = f"session_{os.urandom(4).hex()}"
+        
+        context = self.context(docs)
+        sources = self.sources(docs)
+        
+        async for chunk in self.chain_with_history.astream(
+            {"question": question, "context": context},
+            config={"configurable": {"session_id": session_id}}
+        ):
+            if chunk.content:
+                yield chunk.content
+        
+        yield {"session_id": session_id, "sources": sources, "doc_count": len(docs)}
 
     @staticmethod
     def sources(docs: List[Document]) -> List[Dict[str, str]]:

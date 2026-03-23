@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import tempfile
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -32,6 +33,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import settings
+from rag_engine import history_manager, get_session_history
+from langchain_core.messages import messages_to_dict
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -98,6 +101,7 @@ ALLOWED_EXT = {'.pdf', '.docx'}
 
 
 executor = ThreadPoolExecutor(max_workers=2)
+init_event = asyncio.Event()
 
 
 @asynccontextmanager
@@ -106,8 +110,10 @@ async def lifespan(_: FastAPI):
         try:
             from rag_engine import rag_engine
             await rag_engine.initialize_async()
+            init_event.set()
         except Exception as e:
             logger.error(f"启动失败: {e}", exc_info=True)
+            init_event.set()
     
     asyncio.create_task(init_rag())
     yield
@@ -167,9 +173,8 @@ async def query(req: QueryRequest):
     if not rag_engine.is_initialized:
         raise HTTPException(503, "引擎未就绪")
     try:
-        result = await rag_engine.query(req.question)
+        result = await rag_engine.query(req.question, req.session_id)
         sources = [SourceDocument(**s) for s in result.get("sources", [])]
-        result["session_id"] = req.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         return QueryResponse(**result)
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -182,44 +187,21 @@ async def query_stream(req: QueryRequest):
     
     与query API类似，但使用Server-Sent Events (SSE)进行流式输出，
     实现打字机效果的实时回答。
-    
-    请求体:
-        question: 用户问题
-        session_id: 可选的会话ID
-    
-    响应:
-        流式的文本块，以data:开头的SSE格式
-        最后发送 [METADATA] 包含sources等信息
     """
-    from rag_engine import rag_engine, PROMPT
+    from rag_engine import rag_engine
     if not rag_engine.is_initialized:
         raise HTTPException(503, "引擎未就绪")
 
     async def gen():
-        if rag_engine.vectorstore is None or rag_engine.llm is None:
-            yield "data: [ERROR]RAG引擎未初始化\n\n"
-            return
-        
-        docs = await asyncio.to_thread(rag_engine.retriever().invoke, req.question)
-        if not docs:
-            yield "data: 未找到相关法律条文。\n\n"
-            yield "data: [DONE]\n\n"
-            return
-        
-        sources = rag_engine.sources(docs)
-        context = rag_engine.context(docs)
-        full_answer = ""
-        
-        # 流式生成
-        prompt = PROMPT.format_messages(context=context, question=req.question)
-        async for chunk in rag_engine.llm.astream(prompt):
-            if chunk.content:
-                full_answer += chunk.content
-                yield f"data: {chunk.content}\n\n"
-        
-        session_id = req.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        metadata = json.dumps({"session_id": session_id, "sources": sources, "doc_count": len(docs)})
-        yield f"data: [METADATA]{metadata}\n\n"
+        async for chunk in rag_engine.astream_query(req.question, req.session_id):
+            if isinstance(chunk, dict):
+                if "error" in chunk:
+                    yield f"data: {chunk['error']}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                yield f"data: [METADATA]{json.dumps(chunk)}\n\n"
+            else:
+                yield f"data: {chunk}\n\n"
         yield "data: [DONE]\n\n"
         
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -230,11 +212,11 @@ async def upload(file: UploadFile = File(...)):
     """
     文档上传API
     
-    接受用户上传的法律文档（PDF、Word、Text等格式），
+    接受用户上传的法律文档（PDF、docx格式），
     自动解析、分割并存储到向量数据库中。
     
     请求:
-        file: 上传的文件，支持.pdf, .docx, .doc, .pptx, .xlsx, .txt, .md
+        file: 上传的文件，支持.pdf, .docx
     
     响应:
         success: 是否成功
@@ -272,13 +254,11 @@ async def upload(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(500, f"文档处理失败: {e}")
     finally:
-        # 清理临时文件和目录
-        for p in [tmp_path, tmp_dir]:
-            if os.path.exists(p):
-                try:
-                    os.unlink(p) if os.path.isfile(p) else os.rmdir(p)
-                except OSError as e:
-                    logger.warning(f"清理临时文件失败 {p}: {e}")
+        if os.path.exists(tmp_dir):
+            try:
+                shutil.rmtree(tmp_dir)
+            except OSError as e:
+                logger.warning(f"清理临时目录失败 {tmp_dir}: {e}")
 
 
 @app.get("/api/laws")
@@ -313,7 +293,7 @@ async def delete_law(law_name: str):
         raise HTTPException(500, f"删除失败: {str(e)}")
 
 
-@app.delete("/api/rebuild")
+@app.post("/api/rebuild")
 async def rebuild(bg: BackgroundTasks):
     """
     重建向量数据库API
@@ -324,15 +304,11 @@ async def rebuild(bg: BackgroundTasks):
     注意: 这是一个异步操作，通过BackgroundTasks在后台执行。
     """
     def _do():
-        import shutil
-        # 删除现有的向量数据库目录
         if os.path.exists(settings.CHROMA_DB_PATH):
             shutil.rmtree(settings.CHROMA_DB_PATH)
-        # 重置RAG引擎状态并重新初始化
         from rag_engine import rag_engine
         rag_engine.is_initialized = False
         rag_engine.initialize()
-    # 添加后台任务
     bg.add_task(_do)
     return {"message": "后台重建中"}
 
@@ -347,6 +323,38 @@ async def health():
     """
     from rag_engine import rag_engine
     return {"status": "ok", "initialized": rag_engine.is_initialized}
+
+
+@app.get("/api/history")
+async def get_history(limit: int = 100, offset: int = 0):
+    """获取会话列表"""
+    sessions = history_manager.list_sessions(limit=limit, offset=offset)
+    return {"sessions": sessions, "total": len(sessions)}
+
+
+@app.get("/api/history/{session_id}")
+async def get_session_messages(session_id: str):
+    """获取指定会话的消息历史"""
+    chat_history = get_session_history(session_id)
+    messages = messages_to_dict(chat_history.messages)
+    if not messages:
+        raise HTTPException(404, "会话不存在")
+    return {"session_id": session_id, "messages": messages}
+
+
+@app.delete("/api/history/{session_id}")
+async def delete_session_history(session_id: str):
+    """删除指定会话历史"""
+    if not history_manager.delete_session(session_id):
+        raise HTTPException(404, "会话不存在")
+    return {"success": True, "message": f"会话 {session_id} 已删除"}
+
+
+@app.delete("/api/history")
+async def clear_history():
+    """清空所有会话历史"""
+    count = history_manager.clear_all()
+    return {"success": True, "deleted_count": count}
 
 
 if __name__ == "__main__":
