@@ -105,6 +105,10 @@ ALLOWED_EXT = {'.pdf', '.docx'}
 # 最多同时处理2个文档，避免阻塞异步事件循环
 executor = ThreadPoolExecutor(max_workers=2)
 
+# 上传并发信号量：同一时刻最多允许 2 个文件在处理
+# 超出的请求会等待，而不是同时把多个大文件塞进内存
+upload_semaphore = asyncio.Semaphore(2)
+
 # 初始化完成事件，用于通知系统RAG引擎已就绪
 init_event = asyncio.Event()
 
@@ -179,7 +183,6 @@ async def query(req: QueryRequest):
         raise HTTPException(503, "引擎未就绪")
     try:
         result = await rag_engine.query(req.question, req.session_id)
-        sources = [SourceDocument(**s) for s in result.get("sources", [])]
         return QueryResponse(**result)
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -216,13 +219,18 @@ async def query_stream(req: QueryRequest):
 async def upload(file: UploadFile = File(...)):
     """
     文档上传API
-    
+
     接受用户上传的法律文档（PDF、docx格式），
     自动解析、分割并存储到向量数据库中。
-    
+
+    内存优化策略：
+    - 分块流式写入临时文件，单次最多读取 1 MB，避免整个文件驻留内存
+    - 大小校验在写入过程中累计，超限立即中止并删除临时文件
+    - upload_semaphore 限制同时处理的文件数，防止并发上传撑爆内存
+
     请求:
-        file: 上传的文件，支持.pdf, .docx
-    
+        file: 上传的文件，支持 .pdf, .docx
+
     响应:
         success: 是否成功
         chunks_added: 新增的文本片段数
@@ -233,37 +241,47 @@ async def upload(file: UploadFile = File(...)):
     if not rag_engine.is_initialized:
         raise HTTPException(503, "系统未就绪")
 
-    # 读取文件内容
-    content = await file.read()
-    # 检查文件大小是否超过限制
-    if len(content) > settings.MAX_UPLOAD_SIZE:
-        raise HTTPException(413, f"文件过大，最大允许 {settings.MAX_UPLOAD_SIZE // 1024 // 1024}MB")
-
     filename = file.filename or "unknown"
     ext = Path(filename).suffix.lower()
-    # 检查文件扩展名是否允许
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"不支持的格式: {ext}")
 
-    # 创建临时目录和临时文件来处理上传的文档
     tmp_dir = tempfile.mkdtemp()
     tmp_path = os.path.join(tmp_dir, filename)
-    try:
-        # 将内容写入临时文件
-        with open(tmp_path, 'wb') as f:
-            f.write(content)
-        # 使用线程池执行同步的文档处理任务，避免阻塞异步事件循环
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(executor, rag_engine.add_document, tmp_path)
-        return UploadResponse(success=True, message=f"'{filename}' 加载成功", **result)
-    except Exception as e:
-        raise HTTPException(500, f"文档处理失败: {e}")
-    finally:
-        if os.path.exists(tmp_dir):
-            try:
-                shutil.rmtree(tmp_dir)
-            except OSError as e:
-                logger.warning(f"清理临时目录失败 {tmp_dir}: {e}")
+
+    async with upload_semaphore:
+        try:
+            # 分块流式写入，每次最多读取 1 MB，不把整个文件载入内存
+            CHUNK = 1024 * 1024  # 1 MB
+            total = 0
+            with open(tmp_path, 'wb') as f:
+                while True:
+                    chunk = await file.read(CHUNK)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > settings.MAX_UPLOAD_SIZE:
+                        raise HTTPException(
+                            413,
+                            f"文件过大，最大允许 {settings.MAX_UPLOAD_SIZE // 1024 // 1024} MB"
+                        )
+                    f.write(chunk)
+
+            # 文档解析在线程池中执行，避免阻塞事件循环
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(executor, rag_engine.add_document, tmp_path)
+            return UploadResponse(success=True, message=f"'{filename}' 加载成功", **result)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"文档处理失败: {e}")
+        finally:
+            if os.path.exists(tmp_dir):
+                try:
+                    shutil.rmtree(tmp_dir)
+                except OSError as e:
+                    logger.warning(f"清理临时目录失败 {tmp_dir}: {e}")
 
 
 @app.get("/api/laws")
