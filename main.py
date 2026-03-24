@@ -83,6 +83,8 @@ class UploadResponse(BaseModel):
     total_chunks: int       # 总文本片段数量
     law_names: List[str]    # 涉及的法律名称列表
     message: str            # 响应消息
+    skipped: bool = False   # 是否跳过（已存在）
+    reason: str = ""        # 跳过原因
 
 
 # Pydantic模型：系统状态响应
@@ -270,6 +272,8 @@ async def upload(file: UploadFile = File(...)):
             # 文档解析在线程池中执行，避免阻塞事件循环
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(executor, rag_engine.add_document, tmp_path)
+            if result.get("skipped"):
+                return UploadResponse(success=True, message=f"'{filename}' 已跳过: {result.get('reason', '法律已存在')}", **result)
             return UploadResponse(success=True, message=f"'{filename}' 加载成功", **result)
 
         except HTTPException:

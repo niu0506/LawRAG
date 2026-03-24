@@ -756,12 +756,13 @@ class RAGEngine:
         同步添加文档到向量数据库
         
         解析文档、分割文本、批量添加到向量数据库。
+        如果法律已存在则跳过，避免重复向量化。
         
         Args:
             file_path: 文档路径
         
         Returns:
-            包含file、chunks_added、total_chunks、law_names的字典
+            包含file、chunks_added、total_chunks、law_names、skipped的字典
         """
         if self.vectorstore is None:
             raise RuntimeError("向量存储未初始化")
@@ -770,6 +771,21 @@ class RAGEngine:
         docs = LawDocumentLoader().load_file(file_path)
         if not docs:
             raise ValueError("文档解析失败或内容为空")
+        
+        # 获取法律名称并检查是否已存在
+        law_name = docs[0].metadata.get("law_name", "") if docs else ""
+        if law_name:
+            existing = self.vectorstore.get(where={"law_name": law_name})
+            if existing and existing.get("ids"):
+                logger.info(f"⏭️ 法律已存在，跳过: {law_name}")
+                return {
+                    "file": Path(file_path).name,
+                    "chunks_added": 0,
+                    "total_chunks": self.doc_count,
+                    "law_names": self.law_names,
+                    "skipped": True,
+                    "reason": f"法律 '{law_name}' 已存在"
+                }
         
         # 批量添加到向量数据库（每批32个）
         batch_size = 32
@@ -782,7 +798,7 @@ class RAGEngine:
         self.doc_count += len(docs)
         self._refresh_names()
         
-        return {"file": Path(file_path).name, "chunks_added": len(docs), "total_chunks": self.doc_count, "law_names": self.law_names}
+        return {"file": Path(file_path).name, "chunks_added": len(docs), "total_chunks": self.doc_count, "law_names": self.law_names, "skipped": False}
 
     def _refresh_names(self) -> None:
         """
