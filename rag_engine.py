@@ -4,7 +4,7 @@ RAG 引擎 — 向量检索 + LLM 生成 + 文档加载
 本模块实现了AI法律顾问的核心RAG（检索增强生成）引擎，功能包括：
 
 1. 文档加载与处理：
-   - 支持多种格式（PDF、Word、PowerPoint、Excel、Text、Markdown）
+   - 支持格式（PDF、Word）
    - 智能文本分块（按法律条文分割）
    - 增量加载（基于文件哈希缓存）
 
@@ -146,10 +146,6 @@ class HistoryManager:
             with _get_db_conn(self.db_path) as conn:
                 _init_db_schema(conn)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)")
-                try:
-                    conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
-                except sqlite3.OperationalError:
-                    pass
     
     def list_sessions(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         with _db_lock:
@@ -259,38 +255,13 @@ def _file_md5(path: str) -> str:
     return h.hexdigest()
 
 
-def _load_hash_cache() -> Dict[str, str]:
-    """
-    加载文件哈希缓存
-    
-    从JSON文件读取之前处理过的文件MD5哈希值。
-    
-    Returns:
-        文件路径到MD5哈希的映射字典
-    """
-    p = Path(settings.FILE_HASH_CACHE)
-    return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
-
-
-def _save_hash_cache(cache: Dict[str, str]) -> None:
-    """
-    保存文件哈希缓存
-    
-    将当前处理过的文件MD5哈希值保存到JSON文件。
-    
-    Args:
-        cache: 文件路径到MD5哈希的映射字典
-    """
-    Path(settings.FILE_HASH_CACHE).write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
-
-
 class LawDocumentLoader:
     """
     法律文档加载器
     
     负责从多种格式的法律文档中提取文本，并进行智能分块。
     特性：
-    - 支持PDF、Word、Excel、PowerPoint、Text、Markdown格式
+    - 支持PDF、Word格式
     - 智能按法律条文分块
     - 增量加载支持（基于文件MD5哈希）
     - 自动识别法律名称
@@ -304,7 +275,7 @@ class LawDocumentLoader:
             chunk_size=settings.CHUNK_SIZE, chunk_overlap=settings.CHUNK_OVERLAP,
             separators=["\n第", "\n##", "\n#", "\n\n", "\n", "。", "；", " ", ""])
 
-    def load_directory(self, directory: str, incremental: bool = True) -> List[Document]:
+    def load_directory(self, directory: str, vectorstore=None) -> List[Document]:
         """
         加载目录下的所有法律文档
         
@@ -312,7 +283,7 @@ class LawDocumentLoader:
         
         Args:
             directory: 要扫描的目录路径
-            incremental: 是否启用增量加载（默认True，只加载有变化的文件）
+            vectorstore: 可选的向量存储，用于增量加载时检查文件是否已存在
         
         Returns:
             提取的文档片段列表
@@ -320,43 +291,35 @@ class LawDocumentLoader:
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
         
-        # 递归获取所有支持格式的文件
         files = [f for f in path.rglob("*") if f.suffix.lower() in SUPPORTED_EXTENSIONS]
-        
-        # 加载文件哈希缓存，实现增量加载
-        hash_cache = _load_hash_cache() if incremental else {}
-        new_cache = dict(hash_cache)
         
         docs, skipped = [], 0
         
         for f in files:
             abs_path = str(f.resolve())
-            current_md5 = _file_md5(abs_path)
+            file_hash = _file_md5(abs_path)
             
-            # 如果文件未变化，跳过处理
-            if incremental and hash_cache.get(abs_path) == current_md5:
-                skipped += 1
-                continue
+            if vectorstore is not None:
+                existing = vectorstore.get(where={"file_hash": file_hash})
+                if existing and existing.get("ids"):
+                    skipped += 1
+                    logger.info(f"⏭️ 文件已存在，跳过: {f.name} (hash: {file_hash[:8]}...)")
+                    continue
             
             try:
-                d = self.load_file(abs_path)
+                d = self.load_file(abs_path, file_hash=file_hash)
                 docs.extend(d)
-                new_cache[abs_path] = current_md5
                 logger.info(f"✅ {f.name} → {len(d)} 片段")
             except Exception as e:
                 logger.error(f"❌ {f.name}: {e}", exc_info=True)
         
-        # 保存更新的哈希缓存
-        if incremental:
-            _save_hash_cache(new_cache)
-        
         if skipped:
-            logger.info(f"⏭️ 跳过 {skipped} 个未变更文件")
+            logger.info(f"⏭️ 跳过 {skipped} 个已存在文件")
         
         logger.info(f"共加载 {len(docs)} 个新片段")
         return docs
 
-    def load_file(self, file_path: str) -> List[Document]:
+    def load_file(self, file_path: str, file_hash: Optional[str] = None) -> List[Document]:
         """
         加载单个法律文档
         
@@ -371,6 +334,9 @@ class LawDocumentLoader:
         path = Path(file_path)
         ext = path.suffix.lower()
         
+        if file_hash is None:
+            file_hash = _file_md5(file_path)
+        
         text = self._load_document(file_path, ext)
         if not text.strip():
             return []
@@ -378,7 +344,7 @@ class LawDocumentLoader:
         law_name = self._get_law_name(path.stem, text)
         chunks = self._split_logic(text)
         
-        return [Document(page_content=c, metadata={"source": path.name, "law_name": law_name, "article": self._get_article_tag(c) or f"片段{i+1}"}) for i, c in enumerate(chunks) if c.strip()]
+        return [Document(page_content=c, metadata={"source": path.name, "law_name": law_name, "article": self._get_article_tag(c) or f"片段{i+1}", "file_hash": file_hash}) for i, c in enumerate(chunks) if c.strip()]
 
     def _load_document(self, file_path: str, ext: str) -> str:
         """
@@ -401,7 +367,7 @@ class LawDocumentLoader:
                 docs = loader.load()
                 return '\n'.join(doc.page_content for doc in docs)
             else:
-                return Path(file_path).read_text(encoding='utf-8', errors='ignore')
+                raise ValueError(f"不支持的文件格式: {ext}")
         except Exception as e:
             logger.error(f"文档解析失败: {e}")
             return ""
@@ -411,6 +377,7 @@ class LawDocumentLoader:
         智能文本分块逻辑
         
         优先按法律条文（"第X条"）分割，保持法律条文的完整性。
+        仅对单个超长条文进行递归分割，避免跨条文破坏边界。
         如果文本中没有明显的条文结构，则使用通用的递归分割器。
         
         Args:
@@ -419,31 +386,21 @@ class LawDocumentLoader:
         Returns:
             分割后的文本块列表
         """
-        # 匹配法律条文的正则表达式
         pat = r'(第[零一二三四五六七八九十百千]+条)'
         parts = re.split(pat, text)
         
-        # 如果分割后有多个部分，说明文本包含法律条文
         if len(parts) > 3:
-            chunks, cur = [], ""
-            for p in parts:
-                if re.match(pat, p):
-                    # 遇到新条文，保存之前的块
-                    if cur.strip() and len(cur) > 20:
-                        chunks.append(cur.strip())
-                    cur = p
+            chunks = []
+            for i in range(1, len(parts) - 1, 2):
+                article = parts[i] + parts[i + 1]
+                if len(article) > settings.CHUNK_SIZE * 1.5:
+                    chunks.extend(self.splitter.split_text(article))
                 else:
-                    cur += p
-                # 如果当前块过大，使用通用分割器继续分割
-                if len(cur) > settings.CHUNK_SIZE * 1.5:
-                    chunks.extend(self.splitter.split_text(cur))
-                    cur = ""
-            # 保存最后一个块
-            if cur.strip():
-                chunks.append(cur.strip())
+                    chunks.append(article.strip())
+            if parts[0].strip() and len(parts[0]) > 20:
+                chunks.insert(0, parts[0].strip())
             return [c for c in chunks if len(c.strip()) > 20]
         
-        # 无明显条文结构，使用通用分割
         return self.splitter.split_text(text)
 
     @staticmethod
@@ -783,14 +740,10 @@ class RAGEngine:
                 "reason": f"文件内容已存在 (hash: {file_hash[:8]}...)"
             }
         
-        # 加载并解析文档
-        docs = LawDocumentLoader().load_file(file_path)
+        # 加载并解析文档（传入已计算的 file_hash 避免重复计算）
+        docs = LawDocumentLoader().load_file(file_path, file_hash=file_hash)
         if not docs:
             raise ValueError("文档解析失败或内容为空")
-        
-        # 为每个文档添加文件哈希元数据
-        for doc in docs:
-            doc.metadata["file_hash"] = file_hash
         
         # 批量添加到向量数据库（每批32个）
         batch_size = 32
@@ -799,9 +752,10 @@ class RAGEngine:
             self.vectorstore.add_documents(batch)
             logger.info(f"📥 处理进度: {min(i + batch_size, len(docs))}/{len(docs)}")
         
-        # 更新统计信息
+        # 更新统计信息（增量更新 law_names）
         self.doc_count += len(docs)
-        self._refresh_names()
+        new_names = {d.metadata.get("law_name") for d in docs if d.metadata.get("law_name")}
+        self.law_names = sorted(set(self.law_names) | new_names)
         
         return {"file": Path(file_path).name, "chunks_added": len(docs), "total_chunks": self.doc_count, "law_names": self.law_names, "skipped": False}
 
@@ -874,7 +828,10 @@ class RAGEngine:
             # 删除这些文档
             self.vectorstore.delete(ids=results["ids"])
             self.doc_count -= len(results["ids"])
-            self._refresh_names()
+            # 增量更新：检查是否还有该法律的文档
+            remaining = self.vectorstore.get(where={"law_name": law_name})
+            if not remaining or not remaining.get("ids"):
+                self.law_names = [n for n in self.law_names if n != law_name]
             
             return {
                 "success": True,

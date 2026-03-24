@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import settings
-from rag_engine import history_manager, get_session_history
+from rag_engine import history_manager, get_session_history, rag_engine
 from langchain_core.messages import messages_to_dict
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
@@ -111,20 +111,14 @@ executor = ThreadPoolExecutor(max_workers=2)
 # 超出的请求会等待，而不是同时把多个大文件塞进内存
 upload_semaphore = asyncio.Semaphore(2)
 
-# 初始化完成事件，用于通知系统RAG引擎已就绪
-init_event = asyncio.Event()
-
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     async def init_rag():
         try:
-            from rag_engine import rag_engine
             await rag_engine.initialize_async()
-            init_event.set()
         except Exception as e:
             logger.error(f"启动失败: {e}", exc_info=True)
-            init_event.set()
     
     asyncio.create_task(init_rag())
     yield
@@ -159,7 +153,6 @@ async def status():
     返回当前RAG引擎的初始化状态、文档数量、使用的模型等信息。
     用于前端检查系统是否就绪。
     """
-    from rag_engine import rag_engine
     return rag_engine.get_status()
 
 
@@ -180,7 +173,6 @@ async def query(req: QueryRequest):
         sources: 引用条文列表
         doc_count: 检索到的文档数
     """
-    from rag_engine import rag_engine
     if not rag_engine.is_initialized:
         raise HTTPException(503, "引擎未就绪")
     try:
@@ -198,7 +190,6 @@ async def query_stream(req: QueryRequest):
     与query API类似，但使用Server-Sent Events (SSE)进行流式输出，
     实现打字机效果的实时回答。
     """
-    from rag_engine import rag_engine
     if not rag_engine.is_initialized:
         raise HTTPException(503, "引擎未就绪")
 
@@ -239,7 +230,6 @@ async def upload(file: UploadFile = File(...)):
         total_chunks: 数据库中总片段数
         law_names: 涉及的法律名称
     """
-    from rag_engine import rag_engine
     if not rag_engine.is_initialized:
         raise HTTPException(503, "系统未就绪")
 
@@ -295,7 +285,6 @@ async def laws():
     
     返回当前向量数据库中存储的所有法律文档信息。
     """
-    from rag_engine import rag_engine
     return {"laws": rag_engine.law_names, "total": len(rag_engine.law_names), "doc_count": rag_engine.doc_count}
 
 
@@ -309,7 +298,6 @@ async def delete_law(law_name: str):
     路径参数:
         law_name: 要删除的法律名称（URL编码）
     """
-    from rag_engine import rag_engine
     if not rag_engine.is_initialized:
         raise HTTPException(503, "系统未就绪")
     try:
@@ -328,7 +316,6 @@ async def health():
     简单的健康检查端点，返回系统状态和RAG引擎初始化状态。
     用于负载均衡器的健康探测。
     """
-    from rag_engine import rag_engine
     return {"status": "ok", "initialized": rag_engine.is_initialized}
 
 
