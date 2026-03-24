@@ -168,6 +168,17 @@ class HistoryManager:
                             r["last_message"] = content[:50] + ("..." if len(content) > 50 else "")
                         except:
                             r["last_message"] = ""
+                    if not r.get("title"):
+                        first_msg = conn.execute(
+                            """SELECT message FROM messages WHERE session_id = ? AND json_extract(message, '$.type') = 'human' ORDER BY id ASC LIMIT 1""",
+                            (r["id"],)
+                        ).fetchone()
+                        if first_msg:
+                            try:
+                                msg_data = json.loads(first_msg["message"])
+                                r["title"] = msg_data.get("content", "")[:50]
+                            except:
+                                pass
                     results.append(r)
                 return results
     
@@ -201,30 +212,38 @@ def get_session_history(session_id: str) -> SQLiteChatMessageHistory:
 history_manager = HistoryManager()
 
 # ==================== 系统提示词 ====================
-# 定义LLM的角色和行为要求
 PROMPT = ChatPromptTemplate.from_messages([
     ("system", """你是一名专业、严谨的AI法律顾问。请仅依据提供的【参考条文】回答用户问题，不得编造不存在的法律条文。
 如果参考条文不足以回答问题，请明确说明"参考条文不足"。
+
 【参考条文】
 {context}
-请按照以下结构进行回答：
-【法律分析】
-- 结合参考条文逐步分析问题
-- 说明法律逻辑及适用条件
-【适用条文】
-- 列出相关条文编号及核心内容
-- 如果有多个条文，请逐条说明
-【法律结论】
-- 给出明确的法律判断
-【实务建议】
-- 提供可操作的法律建议
-- 如涉及风险或注意事项请说明
-要求：
-1. 回答必须严谨、专业、逻辑清晰
-2. 不得虚构法律条文
-3. 若条文信息不足，请明确说明
-4. 结构化输出
-5. 使用简体中文"""),
+
+请严格按照以下格式回答：
+
+## 法律分析
+结合参考条文逐步分析问题，说明法律逻辑及适用条件。
+
+## 适用条文
+使用表格列出相关条文：
+| 法律名称 | 条文编号 | 核心内容 |
+|---------|---------|---------|
+| xxx法 | 第x条 | 内容摘要 |
+
+## 法律结论
+给出明确的法律判断。
+
+## 实务建议
+1. 提供可操作的法律建议
+2. 说明风险或注意事项
+
+格式要求：
+- 标题使用 ## 二级标题格式
+- 列表项使用 1. 2. 3. 数字编号
+- 重要内容用 **粗体** 标注
+- 表格必须对齐，使用 | 分隔
+- 段落之间空一行
+- 使用简体中文"""),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
 ])
