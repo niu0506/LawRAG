@@ -767,25 +767,30 @@ class RAGEngine:
         if self.vectorstore is None:
             raise RuntimeError("向量存储未初始化")
         
+        # 计算文件哈希，用于去重
+        file_hash = _file_md5(file_path)
+        
+        # 检查向量库中是否已有相同哈希的文档
+        existing = self.vectorstore.get(where={"file_hash": file_hash})
+        if existing and existing.get("ids"):
+            logger.info(f"⏭️ 文件已存在，跳过: {Path(file_path).name} (hash: {file_hash[:8]}...)")
+            return {
+                "file": Path(file_path).name,
+                "chunks_added": 0,
+                "total_chunks": self.doc_count,
+                "law_names": self.law_names,
+                "skipped": True,
+                "reason": f"文件内容已存在 (hash: {file_hash[:8]}...)"
+            }
+        
         # 加载并解析文档
         docs = LawDocumentLoader().load_file(file_path)
         if not docs:
             raise ValueError("文档解析失败或内容为空")
         
-        # 获取法律名称并检查是否已存在
-        law_name = docs[0].metadata.get("law_name", "") if docs else ""
-        if law_name:
-            existing = self.vectorstore.get(where={"law_name": law_name})
-            if existing and existing.get("ids"):
-                logger.info(f"⏭️ 法律已存在，跳过: {law_name}")
-                return {
-                    "file": Path(file_path).name,
-                    "chunks_added": 0,
-                    "total_chunks": self.doc_count,
-                    "law_names": self.law_names,
-                    "skipped": True,
-                    "reason": f"法律 '{law_name}' 已存在"
-                }
+        # 为每个文档添加文件哈希元数据
+        for doc in docs:
+            doc.metadata["file_hash"] = file_hash
         
         # 批量添加到向量数据库（每批32个）
         batch_size = 32
