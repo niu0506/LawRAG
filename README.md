@@ -21,22 +21,26 @@
 | Embedding | BAAI/bge-large-zh-v1.5 |
 | LLM 框架 | LangChain |
 | 对话历史 | SQLite |
+| 部署 | Docker |
 
 ## 环境要求
 
 - Python 3.10+
 - PyTorch（支持 CPU / CUDA / MPS）
+- Docker & Docker Compose（可选）
 
 ## 快速开始
 
-### 1. 克隆项目
+### 本地运行
+
+#### 1. 克隆项目
 
 ```bash
 git clone https://github.com/niu0506/LawRAG.git
 cd LawRAG
 ```
 
-### 2. 创建虚拟环境（推荐）
+#### 2. 创建虚拟环境（推荐）
 
 ```bash
 python -m venv .venv
@@ -48,7 +52,7 @@ python -m venv .venv
 .venv\Scripts\activate   # Windows
 ```
 
-### 3. 安装 PyTorch
+#### 3. 安装 PyTorch
 
 根据你的系统选择合适的安装命令：
 
@@ -67,13 +71,13 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
-### 4. 安装依赖
+#### 4. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 5. 配置环境变量
+#### 5. 配置环境变量
 
 ```bash
 cp .env.example .env
@@ -91,10 +95,21 @@ LLM_MODEL=gpt-4
 HF_TOKEN=your_hf_token_here
 ```
 
-### 6. 启动服务
+#### 6. 启动服务
 
 ```bash
 python main.py
+```
+
+访问 http://localhost:8000 即可使用。
+
+### Docker 运行
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入 LLM_API_KEY 等配置
+
+docker-compose up --build
 ```
 
 访问 http://localhost:8000 即可使用。
@@ -112,8 +127,9 @@ python main.py
 | `CHUNK_OVERLAP` | 分块重叠字符数 | | 50 |
 | `TOP_K` | 检索返回文档数 | | 5 |
 | `HISTORY_TURNS` | 多轮对话保留轮数 | | 5 |
-| `HOST` | 服务监听地址 | | 127.0.0.1 |
+| `HOST` | 服务监听地址 | | localhost |
 | `PORT` | 服务监听端口 | | 8000 |
+| `APP_PORT` | Docker 映射端口 | | 8000 |
 | `MAX_UPLOAD_SIZE` | 文件上传大小限制 | | 52428800 (50MB) |
 
 ## API 文档
@@ -155,15 +171,20 @@ GET  /api/health    # 健康检查
 
 ```
 LawRAG/
-├── main.py          # FastAPI 服务入口
-├── rag_engine.py    # RAG 引擎 + 对话历史管理
-├── config.py        # 配置管理
-├── index.html       # 前端页面
-├── requirements.txt # 依赖列表
-├── .env.example     # 环境变量示例
+├── main.py              # FastAPI 服务入口
+├── rag_engine.py        # RAG 引擎 + 对话历史管理
+├── config.py            # 配置管理
+├── index.html           # 前端页面
+├── style.css            # 样式
+├── script.js            # 前端脚本
+├── requirements.txt     # 依赖列表
+├── .env.example         # 环境变量示例
+├── Dockerfile           # Docker 镜像配置
+├── docker-compose.yml   # Docker Compose 配置
+├── .dockerignore        # Docker 忽略文件
 └── db/
-    ├── chroma/      # 向量数据库存储
-    └── history.db   # 对话历史数据库
+    ├── chroma/          # 向量数据库存储
+    └── history.db       # 对话历史数据库
 ```
 
 ## 使用说明

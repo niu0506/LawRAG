@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
+      - HF_TOKEN=${HF_TOKEN}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}
+      - CHUNK_SIZE=${CHUNK_SIZE:-500}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+      - TOP_K=${TOP_K:-5}
+      - HOST=0.0.0.0
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./data:/app/data
+      - ./db:/app/db
+    restart: unless-stopped
