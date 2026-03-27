@@ -3,7 +3,6 @@ services:
     image: python:3.12-slim
     ports:
       - "${APP_PORT:-8000}:8000"
-    environment:只保留 docker-compose.yml
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_BASE_URL=${LLM_BASE_URL}
       - LLM_MODEL=${LLM_MODEL}
