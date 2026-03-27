@@ -162,13 +162,8 @@ LawRAG/
 ├── rag_engine.py        # RAG 引擎 + 对话历史管理
 ├── config.py            # 配置管理
 ├── index.html           # 前端页面
-├── style.css            # 样式
-├── script.js            # 前端脚本
 ├── requirements.txt     # 依赖列表
 ├── .env.example         # 环境变量示例
-├── Dockerfile           # Docker 镜像配置
-├── docker-compose.yml   # Docker Compose 配置
-├── .dockerignore        # Docker 忽略文件
 └── db/
     ├── chroma/          # 向量数据库存储
     └── history.db       # 对话历史数据库
@@ -186,7 +181,7 @@ LawRAG/
 - 首次运行时会自动下载 Embedding 模型（约 1.3GB），请确保网络通畅
 - 上传的法律文档会按条文智能分割，保持法律条文的完整性
 - 系统支持增量加载，已处理的文件不会重复处理
-- 支持任意 OpenAI 兼容的 LLM API（如 DeepSeek、通义千问等）
+- 支持任意 OpenAI 兼容的 LLM API
 
 ## License
 
