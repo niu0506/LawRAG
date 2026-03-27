@@ -244,20 +244,20 @@ async def upload(file: UploadFile = File(...)):
     async with upload_semaphore:
         try:
             # 分块流式写入，每次最多读取 1 MB，不把整个文件载入内存
-            chunk = 1024 * 1024  # 1 MB
+            chunk_size = 1024 * 1024  # 1 MB
             total = 0
             with open(tmp_path, 'wb') as f:
                 while True:
-                    chunk = await file.read(chunk)
-                    if not chunk:
+                    data = await file.read(chunk_size)
+                    if not data:
                         break
-                    total += len(chunk)
+                    total += len(data)
                     if total > settings.MAX_UPLOAD_SIZE:
                         raise HTTPException(
                             413,
                             f"文件过大，最大允许 {settings.MAX_UPLOAD_SIZE // 1024 // 1024} MB"
                         )
-                    f.write(chunk)
+                    f.write(data)
 
             # 文档解析在线程池中执行，避免阻塞事件循环
             loop = asyncio.get_running_loop()
@@ -269,6 +269,7 @@ async def upload(file: UploadFile = File(...)):
         except HTTPException:
             raise
         except Exception as e:
+            logger.error(f"文档处理失败: {e}", exc_info=True)
             raise HTTPException(500, f"文档处理失败: {e}")
         finally:
             if os.path.exists(tmp_dir):
@@ -366,4 +367,4 @@ async def rename_session(session_id: str, req: RenameRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=True)
+    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=False)

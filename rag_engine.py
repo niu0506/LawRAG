@@ -231,6 +231,7 @@ PROMPT = ChatPromptTemplate.from_messages([
 格式要求：
 - 使用Markdown格式输出
 - 层级分明，使用简体中文
+- 结构化输出内容
 - 若参考条文与问题无关，在“法律结论”中直接说明"""),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{question}")
@@ -494,7 +495,7 @@ class RAGEngine:
         """创建Embedding模型"""
         return HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL,
-            model_kwargs={'device': device, 'local_files_only': False},
+            model_kwargs={'device': device, 'local_files_only': True},
             encode_kwargs={'normalize_embeddings': True, 'batch_size': 32}
         )
 
