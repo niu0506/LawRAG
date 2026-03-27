@@ -1168,8 +1168,8 @@
                     <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
                         <div class="upload-icon">📁</div>
                         <div class="upload-text">点击或拖拽上传法律文档</div>
-                        <div class="upload-hint">支持 PDF、Word 格式，最大 50MB</div>
-                        <input type="file" class="upload-input" id="fileInput" accept=".pdf,.docx" onchange="handleFileUpload(event)">
+                        <div class="upload-hint">支持 PDF、Word 格式，可多选，单个最大 50MB</div>
+                        <input type="file" class="upload-input" id="fileInput" accept=".pdf,.docx" multiple onchange="handleFileUpload(event)">
                     </div>
                     <div class="upload-progress" id="uploadProgress">
                         <!-- 动态加载 -->
@@ -1709,15 +1709,15 @@
                 zone.classList.remove('dragover');
                 
                 const files = e.dataTransfer.files;
-                if (files.length > 0) {
-                    uploadFile(files[0]);
+                for (const file of files) {
+                    uploadFile(file);
                 }
             });
         }
 
         function handleFileUpload(event) {
-            const file = event.target.files[0];
-            if (file) {
+            const files = event.target.files;
+            for (const file of files) {
                 uploadFile(file);
             }
             event.target.value = '';
