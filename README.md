@@ -117,7 +117,7 @@ python main.py
 | `HOST` | 服务监听地址 | | localhost |
 | `PORT` | 服务监听端口 | | 8000 |
 | `APP_PORT` | Docker 映射端口 | | 8000 |
-| `MAX_UPLOAD_SIZE` | 文件上传大小限制 | | (50MB) |
+| `MAX_UPLOAD_SIZE` | 文件上传大小限制 | | 50MB |
 
 ## API 文档
 
