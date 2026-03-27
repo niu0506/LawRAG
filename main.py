@@ -244,11 +244,11 @@ async def upload(file: UploadFile = File(...)):
     async with upload_semaphore:
         try:
             # 分块流式写入，每次最多读取 1 MB，不把整个文件载入内存
-            CHUNK = 1024 * 1024  # 1 MB
+            chunk = 1024 * 1024  # 1 MB
             total = 0
             with open(tmp_path, 'wb') as f:
                 while True:
-                    chunk = await file.read(CHUNK)
+                    chunk = await file.read(chunk)
                     if not chunk:
                         break
                     total += len(chunk)

@@ -166,7 +166,7 @@ class HistoryManager:
                             msg_data = json.loads(last_msg)
                             content = msg_data.get("content", "")
                             r["last_message"] = content[:50] + ("..." if len(content) > 50 else "")
-                        except:
+                        except (json.JSONDecodeError, KeyError, TypeError):
                             r["last_message"] = ""
                     if not r.get("title"):
                         first_msg = conn.execute(
@@ -177,7 +177,7 @@ class HistoryManager:
                             try:
                                 msg_data = json.loads(first_msg["message"])
                                 r["title"] = msg_data.get("content", "")[:50]
-                            except:
+                            except (json.JSONDecodeError, KeyError, TypeError):
                                 pass
                     results.append(r)
                 return results
@@ -346,6 +346,7 @@ class LawDocumentLoader:
         
         Args:
             file_path: 文档文件路径
+            file_hash: 可选的文件MD5哈希值，用于增量加载去重
         
         Returns:
             文档片段列表（LangChain Document对象）
@@ -365,7 +366,8 @@ class LawDocumentLoader:
         
         return [Document(page_content=c, metadata={"source": path.name, "law_name": law_name, "article": self._get_article_tag(c) or f"片段{i+1}", "file_hash": file_hash}) for i, c in enumerate(chunks) if c.strip()]
 
-    def _load_document(self, file_path: str, ext: str) -> str:
+    @staticmethod
+    def _load_document(file_path: str, ext: str) -> str:
         """
         根据文件类型加载文档内容
         
