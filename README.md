@@ -21,13 +21,11 @@
 | Embedding | BAAI/bge-large-zh-v1.5 |
 | LLM 框架 | LangChain |
 | 对话历史 | SQLite |
-| 部署 | Docker |
 
 ## 环境要求
 
 - Python 3.10+
 - PyTorch（支持 CPU / CUDA / MPS）
-- Docker & Docker Compose（可选）
 
 ## 快速开始
 
@@ -87,29 +85,18 @@ cp .env.example .env
 
 ```env
 # LLM 配置（必填）
-LLM_API_KEY=your_api_key_here
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4
+LLM_API_KEY=
+LLM_BASE_URL=
+LLM_MODEL=
 
 # HuggingFace Token（可选，用于下载受限模型）
-HF_TOKEN=your_hf_token_here
+HF_TOKEN=
 ```
 
 #### 6. 启动服务
 
 ```bash
 python main.py
-```
-
-访问 http://localhost:8000 即可使用。
-
-### Docker 运行
-
-```bash
-cp .env.example .env
-# 编辑 .env 填入 LLM_API_KEY 等配置
-
-docker-compose up --build
 ```
 
 访问 http://localhost:8000 即可使用。
