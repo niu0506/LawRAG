@@ -202,7 +202,12 @@ async def query_stream(req: QueryRequest):
                     return
                 yield f"data: [METADATA]{json.dumps(chunk)}\n\n"
             else:
-                yield f"data: {chunk}\n\n"
+                # SSE 协议规定：单条 data 字段不能包含换行符
+                # 将 chunk 中的 \n 拆分为多行 "data: ..." 格式发送
+                # 前端收到空的 "data: " 行时，还原为换行符 \n
+                lines = chunk.split('\n')
+                sse_lines = '\n'.join(f"data: {line}" for line in lines)
+                yield f"{sse_lines}\n\n"
         yield "data: [DONE]\n\n"
         
     return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -259,18 +264,25 @@ async def upload(file: UploadFile = File(...)):
                         )
                     f.write(data)
 
+            # 验证文件是否存在且大小正确
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+                raise HTTPException(400, "文件上传失败或为空")
+
             # 文档解析在线程池中执行，避免阻塞事件循环
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(executor, rag_engine.add_document, tmp_path)
             if result.get("skipped"):
-                return UploadResponse(success=True, message=f"'{filename}' 已跳过: {result.get('reason', '法律已存在')}", **result)
+                return UploadResponse(success=True, message=f"'{filename}' 已跳过：{result.get('reason', '法律已存在')}", **result)
             return UploadResponse(success=True, message=f"'{filename}' 加载成功", **result)
 
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"文档处理失败: {e}", exc_info=True)
-            raise HTTPException(500, f"文档处理失败: {e}")
+            logger.error(f"文档处理失败：{e}", exc_info=True)
+            error_msg = str(e)
+            if "Input data should be a String" in error_msg:
+                raise HTTPException(500, "文档解析失败：文件格式可能已损坏或不兼容")
+            raise HTTPException(500, f"文档处理失败：{error_msg}")
         finally:
             if os.path.exists(tmp_dir):
                 try:
@@ -331,10 +343,15 @@ async def get_history(limit: int = 100, offset: int = 0):
 async def get_session_messages(session_id: str):
     """获取指定会话的消息历史"""
     chat_history = get_session_history(session_id)
-    messages = messages_to_dict(chat_history.messages)
-    if not messages:
+    try:
+        messages = chat_history.messages
+        messages_data = messages_to_dict(messages)
+    except Exception as e:
+        logger.error(f"获取会话消息失败：{e}", exc_info=True)
+        raise HTTPException(500, f"获取会话消息失败：{str(e)}")
+    if not messages_data:
         raise HTTPException(404, "会话不存在")
-    return {"session_id": session_id, "messages": messages}
+    return {"session_id": session_id, "messages": messages_data}
 
 
 @app.delete("/api/history/{session_id}")

@@ -37,14 +37,14 @@ from typing import List, Dict, Optional, Any
 
 from langchain_chroma import Chroma
 from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, messages_from_dict, messages_to_dict
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.messages import BaseMessage, AIMessage, AIMessageChunk, messages_from_dict, messages_to_dict
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from docx import Document as DocxDocument
 
 from config import settings, get_llm, get_llm_info
 
@@ -110,10 +110,56 @@ class SQLiteChatMessageHistory(BaseChatMessageHistory):
                     "SELECT message FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
                     (self.session_id, self.max_history * 2)
                 ).fetchall()
-                msgs = messages_from_dict([json.loads(row["message"]) for row in reversed(rows)])
-                return msgs
+                msg_dicts = []
+                for row in reversed(rows):
+                    try:
+                        raw_msg = row["message"]
+                        if not isinstance(raw_msg, str):
+                            logger.warning(f"消息数据不是字符串类型: {type(raw_msg)}, session: {self.session_id}")
+                            continue
+                        msg = json.loads(raw_msg)
+                        if not isinstance(msg, dict):
+                            logger.warning(f"消息数据不是字典类型: {type(msg)}, session: {self.session_id}")
+                            continue
+                        msg_type = msg.get("type")
+                        if msg_type in ("AIMessageChunk", "AIMessage", "ai"):
+                            msg["type"] = "ai"
+                            data = msg.get("data", {})
+                            if isinstance(data, dict):
+                                msg["data"] = {
+                                    "content": data.get("content", ""),
+                                    "additional_kwargs": data.get("additional_kwargs", {}),
+                                    "response_metadata": data.get("response_metadata", {}),
+                                }
+                            else:
+                                msg["data"] = {"content": str(data) if data else "", "additional_kwargs": {}, "response_metadata": {}}
+                        elif msg_type in ("HumanMessage", "human"):
+                            msg["type"] = "human"
+                        elif msg_type == "system":
+                            msg["type"] = "system"
+                        else:
+                            logger.warning(f"未知的消息类型: {msg_type}, session: {self.session_id}")
+                            continue
+                        msg_dicts.append(msg)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"消息JSON解析失败: {e}, session: {self.session_id}")
+                        continue
+                    except Exception as e:
+                        logger.warning(f"消息处理失败: {e}, session: {self.session_id}")
+                        continue
+                if not msg_dicts:
+                    return []
+                try:
+                    msgs = messages_from_dict(msg_dicts)
+                    return msgs
+                except Exception as e:
+                    logger.error(f"消息反序列化失败: {e}, session: {self.session_id}, data: {msg_dicts}")
+                    return []
     
     def add_message(self, message: BaseMessage) -> None:
+        if isinstance(message, AIMessageChunk):
+            message = AIMessage(content=message.content, additional_kwargs=message.additional_kwargs)
+        
         with _db_lock:
             with _get_db_conn(self.db_path) as conn:
                 conn.execute("INSERT OR IGNORE INTO sessions (id) VALUES (?)", (self.session_id,))
@@ -125,6 +171,32 @@ class SQLiteChatMessageHistory(BaseChatMessageHistory):
                     "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (self.session_id,)
                 )
+    
+    def update_last_ai_sources(self, sources: List[Dict[str, str]]) -> None:
+        """更新最后一条 AI 消息的引用来源"""
+        with _db_lock:
+            with _get_db_conn(self.db_path) as conn:
+                row = conn.execute(
+                    "SELECT id, message FROM messages WHERE session_id = ? AND json_extract(message, '$.type') IN ('ai', 'AIMessage', 'AIMessageChunk') ORDER BY id DESC LIMIT 1",
+                    (self.session_id,)
+                ).fetchone()
+                if row:
+                    try:
+                        msg_data = json.loads(row["message"])
+                        if msg_data.get("type") in ("ai", "AIMessage", "AIMessageChunk"):
+                            msg_data["type"] = "ai"
+                        data = msg_data.get("data", {})
+                        if isinstance(data, dict):
+                            data["additional_kwargs"] = data.get("additional_kwargs", {})
+                            data["additional_kwargs"]["sources"] = sources
+                        else:
+                            msg_data["data"] = {"content": str(data) if data else "", "additional_kwargs": {"sources": sources}, "response_metadata": {}}
+                        conn.execute(
+                            "UPDATE messages SET message = ? WHERE id = ?",
+                            (json.dumps(msg_data, ensure_ascii=False), row["id"])
+                        )
+                    except (json.JSONDecodeError, KeyError, TypeError) as e:
+                        logger.warning(f"更新 sources 失败: {e}, session: {self.session_id}")
     
     def clear(self) -> None:
         with _db_lock:
@@ -160,23 +232,29 @@ class HistoryManager:
                 results = []
                 for row in rows:
                     r = dict(row)
+                    for key in ("created_at", "updated_at"):
+                        if r.get(key):
+                            val = r[key]
+                            if isinstance(val, str) and "T" not in val:
+                                r[key] = val.replace(" ", "T")
                     last_msg = r.get("last_message")
                     if last_msg:
                         try:
                             msg_data = json.loads(last_msg)
-                            content = msg_data.get("content", "")
+                            content = msg_data.get("content") or (msg_data.get("data", {}).get("content") if isinstance(msg_data.get("data"), dict) else "")
                             r["last_message"] = content[:50] + ("..." if len(content) > 50 else "")
                         except (json.JSONDecodeError, KeyError, TypeError):
                             r["last_message"] = ""
                     if not r.get("title"):
                         first_msg = conn.execute(
-                            """SELECT message FROM messages WHERE session_id = ? AND json_extract(message, '$.type') = 'human' ORDER BY id ASC LIMIT 1""",
+                            """SELECT message FROM messages WHERE session_id = ? AND json_extract(message, '$.type') IN ('human', 'HumanMessage') ORDER BY id ASC LIMIT 1""",
                             (r["id"],)
                         ).fetchone()
                         if first_msg:
                             try:
                                 msg_data = json.loads(first_msg["message"])
-                                r["title"] = msg_data.get("content", "")[:50]
+                                content = msg_data.get("content") or (msg_data.get("data", {}).get("content") if isinstance(msg_data.get("data"), dict) else "")
+                                r["title"] = content[:50]
                             except (json.JSONDecodeError, KeyError, TypeError):
                                 pass
                     results.append(r)
@@ -373,13 +451,12 @@ class LawDocumentLoader:
                 docs = loader.load()
                 return '\n'.join(doc.page_content for doc in docs)
             elif ext == '.docx':
-                loader = Docx2txtLoader(file_path)
-                docs = loader.load()
-                return '\n'.join(doc.page_content for doc in docs)
+                doc = DocxDocument(file_path)
+                return '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
             else:
-                raise ValueError(f"不支持的文件格式: {ext}")
+                raise ValueError(f"不支持的文件格式：{ext}")
         except Exception as e:
-            logger.error(f"文档解析失败: {e}")
+            logger.error(f"文档解析失败：file_path={file_path}, ext={ext}, error={e}", exc_info=True)
             return ""
 
     def _split_logic(self, text: str) -> List[str]:
@@ -687,6 +764,8 @@ class RAGEngine:
         ):
             if chunk.content:
                 yield chunk.content
+        
+        get_session_history(session_id).update_last_ai_sources(sources)
         
         yield {"session_id": session_id, "sources": sources, "doc_count": len(docs)}
 

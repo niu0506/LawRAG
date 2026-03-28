@@ -547,8 +547,12 @@ body {
 const API_BASE = '';
 let currentSessionId = null;
 let isStreaming = false;
+let streamRenderTimer = null;
 
 const md = window.markdownit({
+    breaks: true,
+    linkify: true,
+    typographer: true,
     highlight: function (str, lang) {
         if (lang && hljs.getLanguage(lang)) {
             try {
@@ -558,6 +562,16 @@ const md = window.markdownit({
         return '';
     }
 });
+
+function normalizeMarkdown(text) {
+    if (!text) return '';
+    let result = text;
+    // 确保所有级别的标题（## ~ ######）前后都有空行，防止与正文黏连
+    result = result.replace(/^(#{1,6}\s*.+)$/gm, '\n$1\n');
+    // 合并多余的连续空行，保持最多一个空行
+    result = result.replace(/\n{3,}/g, '\n\n');
+    return result.trim();
+}
 
 function $(selector) {
     return document.querySelector(selector);
@@ -623,7 +637,7 @@ function renderMessage(role, content, sources = []) {
     if (role === 'user') {
         div.textContent = content;
     } else {
-        div.innerHTML = md.render(content);
+        div.innerHTML = md.render(normalizeMarkdown(content));
         
         if (sources.length > 0) {
             const sourcesDiv = document.createElement('div');
@@ -677,6 +691,29 @@ async function sendMessage(question) {
     let fullContent = '';
     let sources = [];
     
+    const updateAssistantMessage = () => {
+        if (assistantDiv && fullContent) {
+            assistantDiv.innerHTML = md.render(normalizeMarkdown(fullContent));
+            if (sources.length > 0) {
+                const sourcesDiv = document.createElement('div');
+                sourcesDiv.className = 'sources';
+                sourcesDiv.innerHTML = '<div class="sources-title">📖 引用来源</div>';
+                sources.forEach(s => {
+                    const card = document.createElement('div');
+                    card.className = 'source-card';
+                    card.innerHTML = `
+                        <div class="source-title">${s.law_name} ${s.article}</div>
+                        <div class="source-content">${s.content}</div>
+                    `;
+                    sourcesDiv.appendChild(card);
+                });
+                assistantDiv.appendChild(sourcesDiv);
+            }
+            $('#messages').scrollTop = $('#messages').scrollHeight;
+        }
+        streamRenderTimer = null;
+    };
+    
     try {
         const res = await fetch(`${API_BASE}/api/query/stream`, {
             method: 'POST',
@@ -699,6 +736,10 @@ async function sendMessage(question) {
                     const data = line.slice(6);
                     
                     if (data === '[DONE]') {
+                        if (streamRenderTimer) {
+                            clearTimeout(streamRenderTimer);
+                            updateAssistantMessage();
+                        }
                         break;
                     }
                     
@@ -707,29 +748,17 @@ async function sendMessage(question) {
                         if (meta.session_id) currentSessionId = meta.session_id;
                         if (meta.sources) sources = meta.sources;
                     } else {
-                        fullContent += data;
+                        // 后端将 chunk 中的 \n 拆成多行 "data: xxx" 发送
+                        // 空的 "data: " 行（即 data === ''）对应原始的换行符，需还原
+                        fullContent += (data === '' ? '\n' : data);
                         
                         if (!assistantDiv) {
                             typingIndicator.remove();
                             assistantDiv = renderMessage('assistant', fullContent);
                         } else {
-                            assistantDiv.innerHTML = md.render(fullContent);
-                            if (sources.length > 0) {
-                                const sourcesDiv = document.createElement('div');
-                                sourcesDiv.className = 'sources';
-                                sourcesDiv.innerHTML = '<div class="sources-title">📖 引用来源</div>';
-                                sources.forEach(s => {
-                                    const card = document.createElement('div');
-                                    card.className = 'source-card';
-                                    card.innerHTML = `
-                                        <div class="source-title">${s.law_name} ${s.article}</div>
-                                        <div class="source-content">${s.content}</div>
-                                    `;
-                                    sourcesDiv.appendChild(card);
-                                });
-                                assistantDiv.appendChild(sourcesDiv);
+                            if (!streamRenderTimer) {
+                                streamRenderTimer = setTimeout(updateAssistantMessage, 50);
                             }
-                            $('#messages').scrollTop = $('#messages').scrollHeight;
                         }
                     }
                 }
@@ -899,14 +928,19 @@ async function loadHistory() {
 async function loadSession(sessionId) {
     try {
         const res = await fetch(`${API_BASE}/api/history/${sessionId}`);
+        if (!res.ok) {
+            throw new Error((await res.json()).detail || '加载失败');
+        }
         const data = await res.json();
         
         currentSessionId = sessionId;
         $('#messages').innerHTML = '';
         
-        data.messages.forEach(msg => {
+        (data.messages || []).forEach(msg => {
             const role = msg.type === 'human' ? 'user' : 'assistant';
-            renderMessage(role, msg.content);
+            const content = msg.data?.content || msg.content || '';
+            const sources = msg.data?.additional_kwargs?.sources || [];
+            renderMessage(role, content, sources);
         });
         
         $$('.tab-btn')[0].click();
@@ -946,13 +980,18 @@ async function clearAllHistory() {
 }
 
 function formatTime(isoString) {
-    const date = new Date(isoString);
+    if (!isoString) return '';
+    let dateStr = isoString;
+    if (dateStr.indexOf('T') === -1) {
+        dateStr = dateStr.replace(' ', 'T');
+    }
+    const date = new Date(dateStr);
     const now = new Date();
-    const diff = now - date;
+    const diffMs = now.getTime() - date.getTime();
     
-    if (diff < 60000) return '刚刚';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
+    if (diffMs < 60000) return '刚刚';
+    if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)}分钟前`;
+    if (diffMs < 86400000) return `${Math.floor(diffMs / 3600000)}小时前`;
     
     return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
